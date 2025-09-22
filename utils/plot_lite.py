@@ -106,65 +106,6 @@ def generate_trajectory_lite(env: gym.Env, agent, seed: int = None, include_log_
 def get_timestamps(env):
     # time in "continuous" units like mbt-gym
     return np.linspace(0.0, env.T, env.M + 1)
-
-# def plot_trajectory(env: gym.Env, agent, seed: int = None):
-#     """
-#     Plots:
-#       - cumulative rewards
-#       - mid price
-#       - inventory (left) & cash (right axis)
-#       - actions (first two dims = half-spreads; extra dims (e.g., market flags) plotted too)
-#     Works with:
-#       - return_vectorized=False (assumes N==1)
-#       - return_vectorized=True (plots all N with alpha blending)
-#     """
-#     timestamps = get_timestamps(env)
-#     observations, actions, rewards = generate_trajectory_lite(env, agent, seed)
-#     N, obs_dim, T1 = observations.shape
-#     _, act_dim, T  = actions.shape
-
-#     rewards_squeezed = np.squeeze(rewards, axis=1)               # (N, T)
-#     cum_rewards = np.cumsum(rewards_squeezed, axis=-1)           # (N, T)
-
-#     cash_holdings = observations[:, CASH, :]                      # (N, T+1)
-#     inventory     = observations[:, INVENTORY, :]                 # (N, T+1)
-#     asset_prices  = observations[:, ASSET_PRICE, :]               # (N, T+1)
-
-#     colors = ["r", "k", "b", "g", "m", "c"]
-#     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 10))
-#     ax3a = ax3.twinx()
-
-#     ax1.set_title("Cumulative rewards")
-#     ax2.set_title("Mid price")
-#     ax3.set_title("Inventory (L) & Cash (R)")
-#     ax4.set_title("Actions")
-
-#     for i in range(N):
-#         alpha = (i + 1) / (N + 1)
-#         traj = f" traj {i}" if N > 1 else ""
-
-#         ax1.plot(timestamps[1:], cum_rewards[i, :], alpha=alpha)
-#         ax2.plot(timestamps, asset_prices[i, :], alpha=alpha)
-
-#         ax3.plot(timestamps, inventory[i, :], color="r", alpha=alpha, label=("inventory" + traj if i == 0 else None))
-#         ax3a.plot(timestamps, cash_holdings[i, :], color="b", alpha=alpha, label=("cash" + traj if i == 0 else None))
-
-#         for j in range(act_dim):
-#             ax4.plot(timestamps[:-1], actions[i, j, :], color=colors[j % len(colors)], alpha=alpha,
-#                      label=(f"action[{j}]" if (i == 0) else None))
-
-#     # Legends
-#     handles3, labels3 = ax3.get_legend_handles_labels()
-#     handles3a, labels3a = ax3a.get_legend_handles_labels()
-#     if handles3 or handles3a:
-#         ax3.legend(handles3 + handles3a, labels3 + labels3a, loc="best")
-#     ax4.legend(loc="best")
-
-#     for ax in (ax1, ax2, ax3, ax4):
-#         ax.grid(True, alpha=0.3)
-
-#     plt.tight_layout()
-#     plt.show()
     
 def plot_trajectory(env: gym.Env, agent, seed: int = None):
     """
