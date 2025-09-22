@@ -107,89 +107,230 @@ def get_timestamps(env):
     # time in "continuous" units like mbt-gym
     return np.linspace(0.0, env.T, env.M + 1)
     
-def plot_trajectory(env: gym.Env, agent, seed: int = None):
+# def plot_trajectory(env: gym.Env, agent, seed: int = None):
+#     """
+#     Overlays on the midprice panel:
+#       - mid price
+#       - quoted bid/ask (from actions)
+#       - reservation price r_t
+#       - reservation bid/ask r_t ± spread/2
+#     """
+#     import numpy as np
+#     import matplotlib.pyplot as plt
+
+#     ASSET_PRICE, INVENTORY, TIMEIDX, CASH = 0, 1, 2, 3
+
+#     # --- rollout (mbt-gym style shapes) ---
+#     timestamps = np.linspace(0.0, env.T, env.M + 1)
+#     observations, actions, rewards = generate_trajectory_lite(env, agent, seed)
+#     N, obs_dim, T1 = observations.shape
+#     _, act_dim, T = actions.shape  # T1 = T+1
+
+#     # unpack
+#     S = observations[:, ASSET_PRICE, :]          # (N, T+1)
+#     q = observations[:, INVENTORY, :]            # (N, T+1)
+#     t_idx = observations[:, TIMEIDX, :]          # (N, T+1) integer index
+#     t_cont = t_idx * env.dt                      # (N, T+1)
+#     hb = actions[:, 0, :]                        # (N, T)
+#     ha = actions[:, 1, :] if act_dim > 1 else np.zeros_like(hb)
+
+#     # quoted bid/ask use the *post-step* price S[:, 1:]
+#     bid_quoted = S[:, 1:] - hb                   # (N, T)
+#     ask_quoted = S[:, 1:] + ha                   # (N, T)
+
+#     # --- reservation price (two ways) ---
+#     # Try "theoretical" AS if agent exposes gamma (or risk_aversion); else derive from actions.
+#     gamma = getattr(agent, "gamma", getattr(agent, "risk_aversion", None))
+#     sigma = getattr(env.dyn.mid, "sigma", None)
+#     k_fill = getattr(env.dyn, "fill_k", None)
+
+#     if (gamma is not None) and (sigma is not None) and (k_fill is not None):
+#         # AS reservation price r_t = S_t - q_t * gamma * sigma^2 * (T - t)
+#         adj = gamma * (sigma ** 2) * (env.T - t_cont)            # (N, T+1)
+#         r_theo = S - q * adj                                     # (N, T+1)
+
+#         # AS half-spread: 0.5 * [gamma*sigma^2*(T - t) + (2/gamma) * log(1 + gamma/k)]
+#         if gamma == 0:
+#             half_spread_theo = np.full_like(r_theo, 1.0 / k_fill)
+#         else:
+#             vol_term  = gamma * (sigma ** 2) * (env.T - t_cont)
+#             fill_term = (2.0 / gamma) * np.log(1.0 + gamma / k_fill)
+#             half_spread_theo = 0.5 * (vol_term + fill_term)
+
+#         res_bid = r_theo - half_spread_theo                      # (N, T+1)
+#         res_ask = r_theo + half_spread_theo                      # (N, T+1)
+#         show_reservation_from = "AS (theoretical)"
+#     else:
+#         # Fallback: define r_t from quoted halves on post-step grid (length T), then pad to T+1
+#         # r = S_{t+1} + (ha - hb)/2; spread_half = (hb + ha)/2
+#         r_step = S[:, 1:] + 0.5 * (ha - hb)                      # (N, T)
+#         half_spread_step = 0.5 * (hb + ha)                       # (N, T)
+#         res_bid_step = r_step - half_spread_step                 # == bid_quoted
+#         res_ask_step = r_step + half_spread_step                 # == ask_quoted
+
+#         # pad a leading NaN to align with T+1 for plotting over the same timestamps
+#         pad = np.full((N, 1), np.nan, dtype=float)
+#         r_theo  = np.concatenate([pad, r_step], axis=1)          # (N, T+1)
+#         res_bid = np.concatenate([pad, res_bid_step], axis=1)
+#         res_ask = np.concatenate([pad, res_ask_step], axis=1)
+#         show_reservation_from = "derived from quotes"
+
+#     # --- rewards cum ---
+#     rewards_squeezed = np.squeeze(rewards, axis=1)               # (N, T)
+#     cum_rewards = np.cumsum(rewards_squeezed, axis=-1)
+
+#     # --- plot ---
+#     colors = ["r", "k", "b", "g", "m", "c"]
+#     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 10))
+#     ax3a = ax3.twinx()
+
+#     ax1.set_title("Cumulative rewards")
+#     ax2.set_title(f"Mid, Quotes, Reservation (source: {show_reservation_from})")
+#     ax3.set_title("Inventory (L) & Cash (R)")
+#     ax4.set_title("Actions")
+
+#     cash = observations[:, CASH, :]
+
+#     for i in range(N):
+#         alpha = (i + 1) / (N + 1)
+
+#         # cum rewards
+#         ax1.plot(timestamps[1:], cum_rewards[i, :], alpha=alpha)
+
+#         # mid (T+1)
+#         ax2.plot(timestamps, S[i, :], color="k", lw=1.5, alpha=alpha, label="Mid" if i == 0 else None)
+#         # quoted bid/ask (T)
+#         ax2.plot(timestamps[1:], bid_quoted[i, :], color="tab:blue", alpha=alpha, label="Quoted Bid" if i == 0 else None)
+#         ax2.plot(timestamps[1:], ask_quoted[i, :], color="tab:orange", alpha=alpha, label="Quoted Ask" if i == 0 else None)
+#         # reservation price (T+1)
+#         ax2.plot(timestamps, r_theo[i, :], color="tab:green", ls="--", alpha=alpha, label="Reservation price" if i == 0 else None)
+#         # reservation bid/ask (T+1)
+#         ax2.plot(timestamps, res_bid[i, :], color="tab:blue", ls="--", alpha=alpha, label="Reservation Bid" if i == 0 else None)
+#         ax2.plot(timestamps, res_ask[i, :], color="tab:orange", ls="--", alpha=alpha, label="Reservation Ask" if i == 0 else None)
+
+#         # inventory & cash (T+1)
+#         ax3.plot(timestamps, q[i, :], color="r", alpha=alpha, label="Inventory" if i == 0 else None)
+#         ax3a.plot(timestamps, cash[i, :], color="b", alpha=alpha, label="Cash" if i == 0 else None)
+
+#         # actions (T)
+#         for j in range(act_dim):
+#             ax4.plot(timestamps[:-1], actions[i, j, :],
+#                      color=colors[j % len(colors)], alpha=alpha,
+#                      label=(f"action[{j}]" if (i == 0) else None))
+
+#     # legends & cosmetics
+#     for ax in (ax1, ax2, ax3, ax4):
+#         ax.grid(True, alpha=0.3)
+#     ax2.legend(loc="best")
+#     h3, l3 = ax3.get_legend_handles_labels()
+#     h3a, l3a = ax3a.get_legend_handles_labels()
+#     if h3 or h3a:
+#         ax3.legend(h3 + h3a, l3 + l3a, loc="best")
+#     ax4.legend(loc="best")
+
+#     plt.tight_layout()
+#     plt.show()
+
+def plot_trajectory(env: gym.Env, agent, seed: int = None, show_reservation: bool = True):
     """
-    Overlays on the midprice panel:
-      - mid price
-      - quoted bid/ask (from actions)
-      - reservation price r_t
-      - reservation bid/ask r_t ± spread/2
+    Panels:
+      (1) cumulative rewards
+      (2) mid + quoted bid/ask + (optional) theoretical reservation bid/ask & reservation mid
+      (3) inventory & cash
+      (4) actions
+    Auto-select reservation model by agent.mode ('finite' or 'infinite').
     """
     import numpy as np
     import matplotlib.pyplot as plt
 
+    # bring in rollout helper from your file/module if needed
+    # from utils.plotting_lite import generate_trajectory_lite
+
+    # try to import your infinite helper (adjust path if different)
+    try:
+        from agents.avellaneda_stoikov import as_infinite_half_spreads as _as_inf_halves
+    except Exception:
+        _as_inf_halves = None
+
     ASSET_PRICE, INVENTORY, TIMEIDX, CASH = 0, 1, 2, 3
 
-    # --- rollout (mbt-gym style shapes) ---
+    # --- rollout ---
     timestamps = np.linspace(0.0, env.T, env.M + 1)
     observations, actions, rewards = generate_trajectory_lite(env, agent, seed)
-    N, obs_dim, T1 = observations.shape
-    _, act_dim, T = actions.shape  # T1 = T+1
+    N, _, T1 = observations.shape
+    _, act_dim, T = actions.shape  # T1 == T+1
+    assert act_dim >= 2, "Actions must contain at least [bid_half, ask_half]."
 
     # unpack
-    S = observations[:, ASSET_PRICE, :]          # (N, T+1)
-    q = observations[:, INVENTORY, :]            # (N, T+1)
-    t_idx = observations[:, TIMEIDX, :]          # (N, T+1) integer index
-    t_cont = t_idx * env.dt                      # (N, T+1)
-    hb = actions[:, 0, :]                        # (N, T)
+    S = observations[:, ASSET_PRICE, :]            # (N, T+1)
+    q = observations[:, INVENTORY, :]              # (N, T+1)
+    t_idx = observations[:, TIMEIDX, :]            # (N, T+1)
+    cash = observations[:, CASH, :]
+    hb = actions[:, 0, :]                          # (N, T)
     ha = actions[:, 1, :] if act_dim > 1 else np.zeros_like(hb)
 
-    # quoted bid/ask use the *post-step* price S[:, 1:]
-    bid_quoted = S[:, 1:] - hb                   # (N, T)
-    ask_quoted = S[:, 1:] + ha                   # (N, T)
+    # quoted bid/ask live on the post-step grid (env updates price first in step)
+    bid_quoted = S[:, 1:] - hb                     # (N, T)
+    ask_quoted = S[:, 1:] + ha                     # (N, T)
 
-    # --- reservation price (two ways) ---
-    # Try "theoretical" AS if agent exposes gamma (or risk_aversion); else derive from actions.
-    gamma = getattr(agent, "gamma", getattr(agent, "risk_aversion", None))
-    sigma = getattr(env.dyn.mid, "sigma", None)
-    k_fill = getattr(env.dyn, "fill_k", None)
+    # rewards → cumulative
+    r_step = np.squeeze(rewards, axis=1)           # (N, T)
+    cum_rewards = np.cumsum(r_step, axis=-1)
 
-    if (gamma is not None) and (sigma is not None) and (k_fill is not None):
-        # AS reservation price r_t = S_t - q_t * gamma * sigma^2 * (T - t)
-        adj = gamma * (sigma ** 2) * (env.T - t_cont)            # (N, T+1)
-        r_theo = S - q * adj                                     # (N, T+1)
+    # ---- reservation overlays (optional) ----
+    res_bid = res_ask = r_mid = None
+    res_source = None
+    if show_reservation:
+        mode = str(getattr(agent, "mode", "finite")).lower()
+        gamma = getattr(agent, "gamma", getattr(agent, "risk_aversion", None))
+        sigma = getattr(env.dyn.mid, "sigma", None)
 
-        # AS half-spread: 0.5 * [gamma*sigma^2*(T - t) + (2/gamma) * log(1 + gamma/k)]
-        if gamma == 0:
-            half_spread_theo = np.full_like(r_theo, 1.0 / k_fill)
-        else:
-            vol_term  = gamma * (sigma ** 2) * (env.T - t_cont)
-            fill_term = (2.0 / gamma) * np.log(1.0 + gamma / k_fill)
-            half_spread_theo = 0.5 * (vol_term + fill_term)
+        if mode == "finite" and (gamma is not None) and (sigma is not None):
+            k = float(getattr(agent, "k", getattr(env.dyn, "fill_k", None)))
+            if k is not None:
+                sigma2 = float(sigma) ** 2
+                Ttot = float(env.T)
+                t = t_idx * env.dt                           # (N, T+1)
+                r_mid = S - q * gamma * sigma2 * (Ttot - t)  # (N, T+1)
+                if gamma == 0.0:
+                    half = np.full_like(r_mid, 1.0 / k)
+                else:
+                    half = 0.5 * (gamma * sigma2 * (Ttot - t) + (2.0 / gamma) * np.log(1.0 + gamma / k))
+                res_bid = r_mid - half
+                res_ask = r_mid + half
+                res_source = "AS finite (theoretical)"
 
-        res_bid = r_theo - half_spread_theo                      # (N, T+1)
-        res_ask = r_theo + half_spread_theo                      # (N, T+1)
-        show_reservation_from = "AS (theoretical)"
-    else:
-        # Fallback: define r_t from quoted halves on post-step grid (length T), then pad to T+1
-        # r = S_{t+1} + (ha - hb)/2; spread_half = (hb + ha)/2
-        r_step = S[:, 1:] + 0.5 * (ha - hb)                      # (N, T)
-        half_spread_step = 0.5 * (hb + ha)                       # (N, T)
-        res_bid_step = r_step - half_spread_step                 # == bid_quoted
-        res_ask_step = r_step + half_spread_step                 # == ask_quoted
+        elif mode == "infinite" and (gamma is not None) and (sigma is not None) and (_as_inf_halves is not None):
+            omega = getattr(agent, "omega", None)
+            if omega is not None:
+                # ALIGNMENT: use q at time t (pre-step) and S at time t+1 (post-step), then pad to match T+1
+                S_post = S[:, 1:]           # (N, T)
+                q_pre  = q[:, :-1]          # (N, T)
+                s_flat = S_post.reshape(-1)
+                q_flat = q_pre.reshape(-1)
+                halves_flat = _as_inf_halves(s_flat, q_flat, float(gamma), float(sigma), float(omega))  # (N*T, 2)
+                halves = halves_flat.reshape(N, T, 2)
+                bid_half_step = halves[:, :, 0]
+                ask_half_step = halves[:, :, 1]
+                res_bid_step = S_post - bid_half_step           # (N, T)
+                res_ask_step = S_post + ask_half_step           # (N, T)
+                r_mid_step  = 0.5 * (res_bid_step + res_ask_step)
 
-        # pad a leading NaN to align with T+1 for plotting over the same timestamps
-        pad = np.full((N, 1), np.nan, dtype=float)
-        r_theo  = np.concatenate([pad, r_step], axis=1)          # (N, T+1)
-        res_bid = np.concatenate([pad, res_bid_step], axis=1)
-        res_ask = np.concatenate([pad, res_ask_step], axis=1)
-        show_reservation_from = "derived from quotes"
+                pad = np.full((N, 1), np.nan, dtype=float)
+                res_bid = np.concatenate([pad, res_bid_step], axis=1)   # (N, T+1)
+                res_ask = np.concatenate([pad, res_ask_step], axis=1)   # (N, T+1)
+                r_mid   = np.concatenate([pad, r_mid_step], axis=1)     # (N, T+1)
+                res_source = "AS infinite (theoretical)"
 
-    # --- rewards cum ---
-    rewards_squeezed = np.squeeze(rewards, axis=1)               # (N, T)
-    cum_rewards = np.cumsum(rewards_squeezed, axis=-1)
-
-    # --- plot ---
+    # ---- plotting ----
     colors = ["r", "k", "b", "g", "m", "c"]
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 10))
     ax3a = ax3.twinx()
 
     ax1.set_title("Cumulative rewards")
-    ax2.set_title(f"Mid, Quotes, Reservation (source: {show_reservation_from})")
+    ax2.set_title("Mid, Quotes" + (f", Reservation ({res_source})" if res_source else ""))
     ax3.set_title("Inventory (L) & Cash (R)")
     ax4.set_title("Actions")
-
-    cash = observations[:, CASH, :]
 
     for i in range(N):
         alpha = (i + 1) / (N + 1)
@@ -197,28 +338,37 @@ def plot_trajectory(env: gym.Env, agent, seed: int = None):
         # cum rewards
         ax1.plot(timestamps[1:], cum_rewards[i, :], alpha=alpha)
 
-        # mid (T+1)
+        # mid
         ax2.plot(timestamps, S[i, :], color="k", lw=1.5, alpha=alpha, label="Mid" if i == 0 else None)
-        # quoted bid/ask (T)
-        ax2.plot(timestamps[1:], bid_quoted[i, :], color="tab:blue", alpha=alpha, label="Quoted Bid" if i == 0 else None)
-        ax2.plot(timestamps[1:], ask_quoted[i, :], color="tab:orange", alpha=alpha, label="Quoted Ask" if i == 0 else None)
-        # reservation price (T+1)
-        ax2.plot(timestamps, r_theo[i, :], color="tab:green", ls="--", alpha=alpha, label="Reservation price" if i == 0 else None)
-        # reservation bid/ask (T+1)
-        ax2.plot(timestamps, res_bid[i, :], color="tab:blue", ls="--", alpha=alpha, label="Reservation Bid" if i == 0 else None)
-        ax2.plot(timestamps, res_ask[i, :], color="tab:orange", ls="--", alpha=alpha, label="Reservation Ask" if i == 0 else None)
 
-        # inventory & cash (T+1)
+        # quoted bid/ask from actions (always shown)
+        ax2.plot(timestamps[1:], bid_quoted[i, :], color="tab:blue", alpha=alpha,
+                 label="Quoted Bid" if i == 0 else None)
+        ax2.plot(timestamps[1:], ask_quoted[i, :], color="tab:orange", alpha=alpha,
+                 label="Quoted Ask" if i == 0 else None)
+
+        # reservation overlays (if computed)
+        if res_bid is not None:
+            ax2.plot(timestamps, res_bid[i, :], color="tab:blue", ls="--", alpha=alpha,
+                     label="Reservation Bid" if i == 0 else None)
+        if res_ask is not None:
+            ax2.plot(timestamps, res_ask[i, :], color="tab:orange", ls="--", alpha=alpha,
+                     label="Reservation Ask" if i == 0 else None)
+        if r_mid is not None:
+            ax2.plot(timestamps, r_mid[i, :], color="tab:green", ls="--", alpha=alpha,
+                     label="Reservation mid" if i == 0 else None)
+
+        # inventory & cash
         ax3.plot(timestamps, q[i, :], color="r", alpha=alpha, label="Inventory" if i == 0 else None)
         ax3a.plot(timestamps, cash[i, :], color="b", alpha=alpha, label="Cash" if i == 0 else None)
 
-        # actions (T)
+        # actions
         for j in range(act_dim):
             ax4.plot(timestamps[:-1], actions[i, j, :],
                      color=colors[j % len(colors)], alpha=alpha,
                      label=(f"action[{j}]" if (i == 0) else None))
 
-    # legends & cosmetics
+    # legends
     for ax in (ax1, ax2, ax3, ax4):
         ax.grid(True, alpha=0.3)
     ax2.legend(loc="best")

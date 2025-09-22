@@ -13,32 +13,44 @@ def as_half_spreads(inventory: np.ndarray, t_idx: np.ndarray, T: float, sigma: f
     return np.stack([bid_half, ask_half], axis=1)
 
 
-def as_infinite_half_spreads(s: np.ndarray, q: np.ndarray, gamma: float, sigma: float,
-                             omega: float) -> np.ndarray:
+def as_infinite_half_spreads(s: np.ndarray, q: np.ndarray,
+                             gamma: float, sigma: float, omega: float,
+                             eps: float = 1e-12) -> np.ndarray:
     """
-    Infinite-horizon AS:
-      r^a(s,q) = s + (1/gamma) ln( 1 + ((1-2q) gamma^2 sigma^2) / (2ω - gamma^2 q^2 sigma^2) )
-      r^b(s,q) = s + (1/gamma) ln( 1 + ((-1-2q) gamma^2 sigma^2) / (2ω - gamma^2 q^2 sigma^2) )
+    Robust infinite-horizon AS:
+      r^a = s + (1/gamma) ln( 1 + ((1-2q) gamma^2 σ^2) / (2omega - gamma^2 q^2 σ^2) )
+      r^b = s + (1/gamma) ln( 1 + ((-1-2q) gamma^2 σ^2) / (2omega - gamma^2 q^2 σ^2) )
+    Returns half-spreads [bid_half, ask_half] >= 0 with NaN-safe clipping.
+    """
+    s = np.asarray(s, float).reshape(-1)
+    q = np.asarray(q, float).reshape(-1)
 
-    Returns half-spreads (bid_half, ask_half) so your env can quote:
-      bid_half = s - r^b,   ask_half = r^a - s
-    Shapes: s,q are (N,), returns (N,2).
-    """
-    s = np.asarray(s, dtype=float).reshape(-1)
-    q = np.asarray(q, dtype=float).reshape(-1)
     gamma = float(gamma)
+    sigma_sq = float(sigma) ** 2
+    omega  = float(omega)
 
-    denom = 2.0 * float(omega) - (gamma**2) * (q**2) * sigma**2
-    # safety (the theory requires ω > 0.5 gamma^2 σ^2 q^2)
-    eps = 1e-12
+    # denom must be > 0; clip up to a small epsilon to avoid div-by-zero
+    denom = 2.0 * omega - (gamma**2) * sigma_sq * (q**2)
     denom = np.maximum(denom, eps)
 
-    coef = (gamma**2) * sigma**2 / denom
-    ask_px = s + (1.0/gamma) * np.log(1.0 + (1.0 - 2.0*q) * coef)
-    bid_px = s + (1.0/gamma) * np.log(1.0 + (-1.0 - 2.0*q) * coef)
+    coef = (gamma**2) * sigma_sq / denom
+
+    z_ask = 1.0 + (1.0 - 2.0 * q) * coef
+    z_bid = 1.0 + (-1.0 - 2.0 * q) * coef
+    # ln requires positive argument; clip to small positive
+    z_ask = np.maximum(z_ask, eps)
+    z_bid = np.maximum(z_bid, eps)
+
+    ask_px = s + (1.0 / gamma) * np.log(z_ask)
+    bid_px = s + (1.0 / gamma) * np.log(z_bid)
 
     bid_half = np.maximum(0.0, s - bid_px)
     ask_half = np.maximum(0.0, ask_px - s)
+
+    # ensure finite values (replace any inf/nan by 0 to preserve plotting)
+    bid_half = np.where(np.isfinite(bid_half), bid_half, 0.0)
+    ask_half = np.where(np.isfinite(ask_half), ask_half, 0.0)
+
     return np.stack([bid_half, ask_half], axis=1)
 
 
@@ -71,7 +83,7 @@ class AvellanedaStoikovAgent:
     """
     Deterministic AS agent.
     mode='finite'  -> classic finite-horizon with fill parameter k
-    mode='infinite'-> infinite-horizon with inventory penalty ω
+    mode='infinite'-> infinite-horizon with inventory penalty omega
     """
     def __init__(self, env, gamma=0.1, mode: str = "finite",
                  k_fill: float | None = None,
@@ -89,7 +101,7 @@ class AvellanedaStoikovAgent:
 
         # infinite-horizon params
         if omega is None:
-            # ω = 0.5 * γ^2 σ^2 (q_max+1)^2  (natural choice)
+            # omega = 0.5 * gamma^2 σ^2 (q_max+1)^2  (natural choice)
             self.omega = 0.5 * (self.gamma**2) * (self.sigma**2) * ((q_max or 100) + 1)**2
         else:
             self.omega = float(omega)
