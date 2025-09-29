@@ -54,3 +54,19 @@ def glft_half_spreads(q: np.ndarray, sigma: float, gamma: float, A: float, k: fl
     bid_half = np.maximum(0.0, half + skew * q)
     ask_half = np.maximum(0.0, half - skew * q)
     return np.stack([bid_half, ask_half], axis=1)
+
+
+def fit_exponential_intensity(delta: np.ndarray, p_step: np.ndarray, dt: float, eps: float = 1e-12):
+    """
+    Fit λ(δ) = A * exp(-k δ) from per-step execution probabilities p(δ).
+    Uses log(λ) = log(p/dt) ≈ log A - k δ (linear regression).
+    WARNING: ignores queue position / sign issues; use carefully.
+    """
+    delta = np.asarray(delta, float).reshape(-1)
+    lam_hat = np.maximum(p_step, eps) / float(dt)
+    y = np.log(lam_hat)                # ≈ log A - k * δ
+    X = np.vstack([np.ones_like(delta), -delta]).T
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    logA, k = beta[0], beta[1]
+    A = float(np.exp(logA))
+    return A, float(k)

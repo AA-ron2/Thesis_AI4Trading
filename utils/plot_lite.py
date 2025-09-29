@@ -3,6 +3,7 @@ import gymnasium as gym
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+from utils.calibration import glft_constants
 
 # Optional; comment out if you don't want seaborn
 import seaborn as sns
@@ -321,6 +322,27 @@ def plot_trajectory(env: gym.Env, agent, seed: int = None, show_reservation: boo
                 res_ask = np.concatenate([pad, res_ask_step], axis=1)   # (N, T+1)
                 r_mid   = np.concatenate([pad, r_mid_step], axis=1)     # (N, T+1)
                 res_source = "AS infinite (theoretical)"
+        
+        elif mode == "glft":
+            # reservation mid for GLFT: r = S - (skew * q)
+            # skew = σ c2 ; half = c1 + (Δ/2) σ c2
+            c1, c2 = glft_constants(agent.gamma, agent.A, agent.k, agent.xi, agent.tick)
+            skew = agent.sigma * c2
+            half = c1 + 0.5 * agent.tick * agent.sigma * c2
+
+            # (T+1)-length arrays: use pre-step q (q[:, :-1]) with post-step S (S[:, 1:]),
+            # then pad a NaN on the left to align to T+1 timeline like the rest of the plot.
+            S_post = S[:, 1:]
+            q_pre  = q[:, :-1]
+            res_bid_step = S_post - (half + skew * q_pre)
+            res_ask_step = S_post + (half - skew * q_pre)
+            r_mid_step   = 0.5 * (res_bid_step + res_ask_step)
+
+            pad = np.full((S.shape[0], 1), np.nan)
+            res_bid = np.concatenate([pad, res_bid_step], axis=1)
+            res_ask = np.concatenate([pad, res_ask_step], axis=1)
+            r_mid   = np.concatenate([pad, r_mid_step],   axis=1)
+            res_source = "GLFT (theoretical)"
 
     # ---- plotting ----
     colors = ["r", "k", "b", "g", "m", "c"]
