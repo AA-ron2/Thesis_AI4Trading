@@ -479,3 +479,148 @@ def generate_results_table_and_hist(env: gym.Env, agent, n_episodes: int = 1):
 
     fig = plot_pnl(total_rewards)
     return results, fig, total_rewards
+
+#################################################
+
+from stochastic_proc.arrivals import PoissonArrivalModel, HawkesArrivalModel
+
+def _acf(x, max_lag=50):
+    x = np.asarray(x, float) - np.mean(x)
+    n = len(x)
+    ac = np.correlate(x, x, mode="full")[n-1:n+max_lag] / np.var(x) / n
+    return ac
+
+def _interarrivals_from_binary(arr, dt):
+    """arr: shape (T,) 0/1; returns inter-arrival times in 'time' units"""
+    idx = np.flatnonzero(arr > 0)
+    if len(idx) < 2:
+        return np.array([])
+    return np.diff(idx) * dt
+
+def _simulate_arrivals(arrival_model, steps, record_intensity=True):
+    """
+    Returns:
+        arrivals: (T, 2) booleans
+        intensity: (T, 2) floats (for Hawkes); Poisson returns constant intensity.
+    """
+    T = steps
+    arrivals = np.zeros((T, 2), dtype=int)
+    intens = np.zeros((T, 2), dtype=float)
+
+    # Poisson keeps a fixed intensity; Hawkes uses current_state as time-varying λ
+    for t in range(T):
+        # log intensity at beginning of step
+        if hasattr(arrival_model, "current_state") and arrival_model.current_state.size > 0:
+            intens[t, :] = np.squeeze(arrival_model.current_state)
+        elif hasattr(arrival_model, "intensity"):
+            intens[t, :] = np.squeeze(np.tile(arrival_model.intensity, (1,1)))
+        else:
+            intens[t, :] = np.nan
+
+        a = arrival_model.get_arrivals()   # (num_trajectories, 2) or (1,2)
+        if a.ndim == 2:
+            a = a[0]  # show the first trajectory
+        arrivals[t, :] = a.astype(int)
+
+        # advance model dynamics
+        try:
+            arrival_model.update(arrivals=a.reshape(1,2), fills=None, actions=None, state=None)
+        except TypeError:
+            # some implementations require arrays; fall back to zeros
+            fills = np.zeros_like(a).reshape(1,2)
+            actions = np.zeros_like(a).reshape(1,2)
+            arrival_model.update(arrivals=a.reshape(1,2), fills=fills, actions=actions, state=None)
+
+    return arrivals, intens
+
+def compare_poisson_vs_hawkes(dt=0.005, steps=200, seed=123,
+                              # Poisson λ per side:
+                              lam_buy=30.0, lam_sell=30.0,
+                              # Hawkes:
+                              mu=24.0, kappa=20.0, jump=12.0):
+    """
+    Visual comparison of Poisson vs Hawkes.
+    - dt: step size
+    - steps: number of steps
+    - Poisson intensity per side (lam_buy/sell)
+    - Hawkes baseline mu (per side), mean_reversion_speed=kappa, jump_size=jump
+      Example (dt=0.005): kappa≈1/(10*dt)=20 for ~10-step memory, eta=jump/kappa=0.6
+    """
+    rng = np.random.default_rng(seed)
+
+    # Build models (1 trajectory)
+    P = PoissonArrivalModel(intensity=np.array([lam_buy, lam_sell]), step_size=dt, num_trajectories=1, seed=seed)
+    H = HawkesArrivalModel(baseline_arrival_rate=np.array([[mu, mu]]), step_size=dt,
+                           jump_size=jump, mean_reversion_speed=kappa,
+                           terminal_time=steps*dt, num_trajectories=1, seed=seed)
+
+    # Reset (ensure deterministic start)
+    if hasattr(P, "reset"): P.reset()
+    if hasattr(H, "reset"): H.reset()
+
+    # Simulate
+    aP, lP = _simulate_arrivals(P, steps)
+    aH, lH = _simulate_arrivals(H, steps)
+
+    # Derived series
+    tgrid = np.arange(steps) * dt
+    P_total = aP.sum(axis=1)      # arrivals per step (both sides)
+    H_total = aH.sum(axis=1)
+    # ACF
+    acP = _acf(P_total, max_lag=min(100, steps-1))
+    acH = _acf(H_total, max_lag=min(100, steps-1))
+    lags = np.arange(len(acP)) * dt
+    # Inter-arrivals (buy side)
+    iaP = _interarrivals_from_binary(aP[:,0], dt)
+    iaH = _interarrivals_from_binary(aH[:,0], dt)
+
+    # ---- PLOTS ----
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    ax1, ax2, ax3, ax4 = axes.ravel()
+
+    # (1) Intensity vs time
+    ax1.set_title("Intensity λ(t) — buy side")
+    ax1.plot(tgrid, lP[:,0], label="Poisson (const)", color="k")
+    ax1.plot(tgrid, lH[:,0], label="Hawkes (time-varying)", color="tab:blue")
+    ax1.set_xlabel("time"); ax1.set_ylabel("intensity"); ax1.legend(); ax1.grid(True, alpha=0.3)
+
+    # (2) Arrival raster (buy side)
+    ax2.set_title("Arrivals (buy side) — raster")
+    buyP = np.flatnonzero(aP[:,0] > 0)
+    buyH = np.flatnonzero(aH[:,0] > 0)
+    ax2.vlines(buyP*dt, 0.6, 1.0, color="k", lw=2, label="Poisson")
+    ax2.vlines(buyH*dt, 0.0, 0.4, color="tab:blue", lw=2, label="Hawkes")
+    ax2.set_ylim(-0.1, 1.1); ax2.set_yticks([]); ax2.set_xlabel("time")
+    ax2.legend(loc="upper right"); ax2.grid(True, alpha=0.2)
+
+    # (3) ACF of per-step arrivals (both sides total)
+    ax3.set_title("ACF of arrivals per step (total, both sides)")
+    ax3.plot(lags, acP, label="Poisson", color="k")
+    ax3.plot(lags, acH, label="Hawkes", color="tab:blue")
+    ax3.set_xlabel("lag"); ax3.set_ylabel("autocorr")
+    ax3.axhline(0, color="k", lw=0.8, alpha=0.5); ax3.legend(); ax3.grid(True, alpha=0.3)
+
+    # (4) Inter-arrival histogram (buy side)
+    ax4.set_title("Inter-arrival times (buy side)")
+    bins = max(10, int(np.sqrt(max(1, len(iaP) + len(iaH)))))
+    if len(iaP): ax4.hist(iaP, bins=bins, density=True, alpha=0.5, label="Poisson")
+    if len(iaH): ax4.hist(iaH, bins=bins, density=True, alpha=0.5, label="Hawkes")
+    # plot exp fit for Poisson baseline (rate ~ mean intensity on buy side)
+    lamP = float(lP[:,0].mean())
+    xs = np.linspace(0, max(iaP.max() if len(iaP) else 1, iaH.max() if len(iaH) else 1), 200)
+    ax4.plot(xs, lamP * np.exp(-lamP * xs), color="k", lw=2, label="Exp(λ̄_P) ref")
+    ax4.set_xlabel("Δt"); ax4.set_ylabel("density"); ax4.legend(); ax4.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    # Quick burstiness metric (optional): Fano factor over windowed counts
+    # (Hawkes > 1 typically; Poisson ≈ 1)
+    # return data for further analysis if needed
+    return {
+        "t": tgrid,
+        "arrivals_poisson": aP, "intensity_poisson": lP,
+        "arrivals_hawkes": aH, "intensity_hawkes": lH,
+        "acf_poisson": acP, "acf_hawkes": acH, "lags": lags,
+        "interarrival_poisson": iaP, "interarrival_hawkes": iaH
+    }
