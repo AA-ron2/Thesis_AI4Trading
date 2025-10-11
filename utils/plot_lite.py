@@ -483,108 +483,250 @@ def generate_results_table_and_hist(env: gym.Env, agent, n_episodes: int = 1):
 #################################################
 
 from stochastic_proc.arrivals import PoissonArrivals, HawkesArrivals
+import inspect
+
+def _pick_kw(sig, candidates: dict):
+    params = set(inspect.signature(sig).parameters.keys())
+    out = {}
+    for names, value in candidates.items():
+        if isinstance(names, str):
+            if names in params:
+                out[names] = value
+        else:
+            for name in names:
+                if name in params:
+                    out[name] = value
+                    break
+    return out
+
+def _init_poisson(cls, lam_buy, lam_sell, dt, steps, seed):
+    sig = cls.__init__
+    vec = np.array([lam_buy, lam_sell], dtype=float)
+
+    # Common aliases incl. your project's names
+    common = _pick_kw(sig, {
+        ("step_size", "dt", "delta_t"): dt,
+        ("num_trajectories", "N", "n_paths", "num_traj"): 1,
+        ("seed", "random_state", "rng_seed"): seed,
+        ("terminal_time", "T", "horizon"): steps * dt,
+    })
+
+    inten = _pick_kw(sig, {
+        "intensity": vec,
+        "rate": vec,
+        "rates": vec,
+        "lam": vec,
+        "lambda_vec": vec,
+        # split sides (your error showed these):
+        ("lam_bid", "lambda_bid", "mu_buy"): float(lam_buy),
+        ("lam_ask", "lambda_ask", "mu_sell"): float(lam_sell),
+    })
+
+    kwargs = {**common, **inten}
+
+    # If your constructor *requires* positional args, fill them by name order.
+    # This keeps kwargs but also supplies missing required params positionally.
+    params = list(inspect.signature(sig).parameters.items())
+    # skip 'self'
+    required = [name for name, p in params[1:] if p.default is inspect._empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    args = []
+    for name in required:
+        if name in kwargs:
+            args.append(kwargs.pop(name))
+        else:
+            # provide best-guess for typical names
+            if name in ("lam_bid", "lambda_bid", "mu_buy"):
+                args.append(float(lam_buy))
+            elif name in ("lam_ask", "lambda_ask", "mu_sell"):
+                args.append(float(lam_sell))
+            elif name in ("num_traj", "num_trajectories", "N", "n_paths"):
+                args.append(1)
+            elif name in ("dt", "step_size", "delta_t"):
+                args.append(dt)
+            elif name in ("seed", "random_state", "rng_seed"):
+                args.append(seed)
+            elif name in ("T", "terminal_time", "horizon"):
+                args.append(steps * dt)
+            else:
+                # leave blank; constructor may have defaults or raise (then we’ll see the exact missing name)
+                pass
+
+    return cls(*args, **kwargs)
+
+def _init_hawkes(cls, mu, kappa, jump, dt, steps, seed):
+    sig = cls.__init__
+
+    common = _pick_kw(sig, {
+        ("step_size", "dt", "delta_t"): dt,
+        ("num_trajectories", "N", "n_paths", "num_traj"): 1,
+        ("seed", "random_state", "rng_seed"): seed,
+        ("terminal_time", "T", "horizon"): steps * dt,
+    })
+
+    base = np.array([[mu, mu]], dtype=float)
+    baseline = _pick_kw(sig, {
+        ("baseline_arrival_rate", "baseline", "mu0", "base_intensity"): base,
+        ("mu", "lambda0"): float(mu),  # some classes take scalar baseline
+        # split per side (just in case your class wants mu_bid/mu_ask)
+        ("mu_bid", "lambda_bid", "lam_bid"): float(mu),
+        ("mu_ask", "lambda_ask", "lam_ask"): float(mu),
+    })
+
+    decay = _pick_kw(sig, {
+        ("mean_reversion_speed", "kappa", "decay", "beta"): float(kappa),
+    })
+
+    alpha = _pick_kw(sig, {
+        ("jump_size", "jump", "alpha"): float(jump),
+    })
+
+    kwargs = {**common, **baseline, **decay, **alpha}
+
+    # positional fill for required params if needed
+    params = list(inspect.signature(sig).parameters.items())
+    required = [name for name, p in params[1:] if p.default is inspect._empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    args = []
+    for name in required:
+        if name in kwargs:
+            args.append(kwargs.pop(name))
+        else:
+            if name in ("mu_bid", "lambda_bid", "lam_bid"):
+                args.append(float(mu))
+            elif name in ("mu_ask", "lambda_ask", "lam_ask"):
+                args.append(float(mu))
+            elif name in ("kappa", "decay", "beta", "mean_reversion_speed"):
+                args.append(float(kappa))
+            elif name in ("jump", "alpha", "jump_size"):
+                args.append(float(jump))
+            elif name in ("num_traj", "num_trajectories", "N", "n_paths"):
+                args.append(1)
+            elif name in ("dt", "step_size", "delta_t"):
+                args.append(dt)
+            elif name in ("seed", "random_state", "rng_seed"):
+                args.append(seed)
+            elif name in ("T", "terminal_time", "horizon"):
+                args.append(steps * dt)
+            else:
+                pass
+
+    return cls(*args, **kwargs)
 
 def _acf(x, max_lag=50):
-    x = np.asarray(x, float) - np.mean(x)
+    x = np.asarray(x, float)
+    x = x - x.mean()
     n = len(x)
-    ac = np.correlate(x, x, mode="full")[n-1:n+max_lag] / np.var(x) / n
+    if n == 0 or np.allclose(x.var(), 0.0):
+        return np.zeros(max_lag+1)
+    ac = np.correlate(x, x, mode="full")[n-1:n+max_lag] / (x.var() * n)
     return ac
 
 def _interarrivals_from_binary(arr, dt):
-    """arr: shape (T,) 0/1; returns inter-arrival times in 'time' units"""
     idx = np.flatnonzero(arr > 0)
     if len(idx) < 2:
         return np.array([])
     return np.diff(idx) * dt
 
-def _simulate_arrivals(arrival_model, steps, record_intensity=True):
-    """
-    Returns:
-        arrivals: (T, 2) booleans
-        intensity: (T, 2) floats (for Hawkes); Poisson returns constant intensity.
-    """
+def _simulate_arrivals(arrival_model, steps):
     T = steps
     arrivals = np.zeros((T, 2), dtype=int)
-    intens = np.zeros((T, 2), dtype=float)
+    intens   = np.zeros((T, 2), dtype=float)
 
-    # Poisson keeps a fixed intensity; Hawkes uses current_state as time-varying λ
     for t in range(T):
-        # log intensity at beginning of step
-        if hasattr(arrival_model, "current_state") and arrival_model.current_state.size > 0:
+        # record intensity if present
+        if hasattr(arrival_model, "current_state") and np.size(arrival_model.current_state) >= 2:
             intens[t, :] = np.squeeze(arrival_model.current_state)
         elif hasattr(arrival_model, "intensity"):
-            intens[t, :] = np.squeeze(np.tile(arrival_model.intensity, (1,1)))
+            intens[t, :] = np.asarray(arrival_model.intensity).reshape(-1)[:2]
         else:
             intens[t, :] = np.nan
 
-        a = arrival_model.get_arrivals()   # (num_trajectories, 2) or (1,2)
+        a = arrival_model.get_arrivals()
+        a = np.asarray(a)
         if a.ndim == 2:
-            a = a[0]  # show the first trajectory
+            a = a[0]  # first trajectory
         arrivals[t, :] = a.astype(int)
 
-        # advance model dynamics
+        # advance (be permissive on signature)
         try:
-            arrival_model.update(arrivals=a.reshape(1,2), fills=None, actions=None, state=None)
+            arrival_model.update(arrivals=a.reshape(1,2), fills=np.zeros((1,2)), actions=np.zeros((1,2)), state=None)
         except TypeError:
-            # some implementations require arrays; fall back to zeros
-            fills = np.zeros_like(a).reshape(1,2)
-            actions = np.zeros_like(a).reshape(1,2)
-            arrival_model.update(arrivals=a.reshape(1,2), fills=fills, actions=actions, state=None)
+            try:
+                arrival_model.update(a.reshape(1,2), None, None, None)
+            except Exception:
+                pass
 
     return arrivals, intens
 
-def compare_poisson_vs_hawkes(dt=0.005, steps=200, seed=123,
-                              # Poisson λ per side:
-                              lam_buy=30.0, lam_sell=30.0,
-                              # Hawkes:
-                              mu=24.0, kappa=20.0, jump=12.0):
+def compare_poisson_vs_hawkes(
+    dt=0.005,
+    steps=200,
+    seed=123,
+    lam_buy=30.0,
+    lam_sell=30.0,
+    mu=24.0,
+    kappa=20.0,
+    jump=12.0,
+    poisson_cls=None,
+    hawkes_cls=None,
+):
     """
-    Visual comparison of Poisson vs Hawkes.
-    - dt: step size
-    - steps: number of steps
-    - Poisson intensity per side (lam_buy/sell)
-    - Hawkes baseline mu (per side), mean_reversion_speed=kappa, jump_size=jump
-      Example (dt=0.005): kappa≈1/(10*dt)=20 for ~10-step memory, eta=jump/kappa=0.6
+    Visual comparison of Poisson vs Hawkes. You can pass your concrete classes via
+    poisson_cls=..., hawkes_cls=... to avoid import-path issues.
     """
-    rng = np.random.default_rng(seed)
+    # lazy import if classes not provided
+    if poisson_cls is None or hawkes_cls is None:
+        last_err = None
+        for path in ("stochastic_proc.arrivals", "processes.arrivals", "core.arrivals"):
+            try:
+                mod = __import__(path, fromlist=["*"])
+                if poisson_cls is None:
+                    # accept PoissonArrivalModel or PoissonArrivals
+                    poisson_cls = getattr(mod, "PoissonArrivalModel", getattr(mod, "PoissonArrivals", None))
+                if hawkes_cls is None:
+                    hawkes_cls = getattr(mod, "HawkesArrivalModel", getattr(mod, "HawkesArrivals", None))
+                if (poisson_cls is not None) and (hawkes_cls is not None):
+                    break
+            except Exception as e:
+                last_err = e
+                continue
+        if poisson_cls is None or hawkes_cls is None:
+            raise ImportError(
+                "Could not import Poisson/Hawkes classes. Pass poisson_cls=..., hawkes_cls=... "
+                "or fix the import path."
+            ) from last_err
 
-    # Build models (1 trajectory)
-    P = PoissonArrivals(intensity=np.array([lam_buy, lam_sell]), step_size=dt, num_trajectories=1, seed=seed)
-    H = HawkesArrivals(baseline_arrival_rate=np.array([[mu, mu]]), step_size=dt,
-                           jump_size=jump, mean_reversion_speed=kappa,
-                           terminal_time=steps*dt, num_trajectories=1, seed=seed)
+    # instantiate with signature-aware kwargs
+    P = _init_poisson(poisson_cls, lam_buy, lam_sell, dt, steps, seed)
+    H = _init_hawkes(hawkes_cls, mu, kappa, jump, dt, steps, seed)
 
-    # Reset (ensure deterministic start)
-    if hasattr(P, "reset"): P.reset()
-    if hasattr(H, "reset"): H.reset()
+    # reset if available
+    for m in (P, H):
+        if hasattr(m, "reset"):
+            m.reset()
 
-    # Simulate
+    # simulate
     aP, lP = _simulate_arrivals(P, steps)
     aH, lH = _simulate_arrivals(H, steps)
 
-    # Derived series
+    # derived series
     tgrid = np.arange(steps) * dt
-    P_total = aP.sum(axis=1)      # arrivals per step (both sides)
+    P_total = aP.sum(axis=1)
     H_total = aH.sum(axis=1)
-    # ACF
     acP = _acf(P_total, max_lag=min(100, steps-1))
     acH = _acf(H_total, max_lag=min(100, steps-1))
     lags = np.arange(len(acP)) * dt
-    # Inter-arrivals (buy side)
     iaP = _interarrivals_from_binary(aP[:,0], dt)
     iaH = _interarrivals_from_binary(aH[:,0], dt)
 
-    # ---- PLOTS ----
+    # plots
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
     ax1, ax2, ax3, ax4 = axes.ravel()
 
-    # (1) Intensity vs time
     ax1.set_title("Intensity λ(t) — buy side")
     ax1.plot(tgrid, lP[:,0], label="Poisson (const)", color="k")
     ax1.plot(tgrid, lH[:,0], label="Hawkes (time-varying)", color="tab:blue")
     ax1.set_xlabel("time"); ax1.set_ylabel("intensity"); ax1.legend(); ax1.grid(True, alpha=0.3)
 
-    # (2) Arrival raster (buy side)
     ax2.set_title("Arrivals (buy side) — raster")
     buyP = np.flatnonzero(aP[:,0] > 0)
     buyH = np.flatnonzero(aH[:,0] > 0)
@@ -593,20 +735,17 @@ def compare_poisson_vs_hawkes(dt=0.005, steps=200, seed=123,
     ax2.set_ylim(-0.1, 1.1); ax2.set_yticks([]); ax2.set_xlabel("time")
     ax2.legend(loc="upper right"); ax2.grid(True, alpha=0.2)
 
-    # (3) ACF of per-step arrivals (both sides total)
     ax3.set_title("ACF of arrivals per step (total, both sides)")
     ax3.plot(lags, acP, label="Poisson", color="k")
     ax3.plot(lags, acH, label="Hawkes", color="tab:blue")
     ax3.set_xlabel("lag"); ax3.set_ylabel("autocorr")
     ax3.axhline(0, color="k", lw=0.8, alpha=0.5); ax3.legend(); ax3.grid(True, alpha=0.3)
 
-    # (4) Inter-arrival histogram (buy side)
     ax4.set_title("Inter-arrival times (buy side)")
     bins = max(10, int(np.sqrt(max(1, len(iaP) + len(iaH)))))
     if len(iaP): ax4.hist(iaP, bins=bins, density=True, alpha=0.5, label="Poisson")
     if len(iaH): ax4.hist(iaH, bins=bins, density=True, alpha=0.5, label="Hawkes")
-    # plot exp fit for Poisson baseline (rate ~ mean intensity on buy side)
-    lamP = float(lP[:,0].mean())
+    lamP = float(np.nanmean(lP[:,0]))
     xs = np.linspace(0, max(iaP.max() if len(iaP) else 1, iaH.max() if len(iaH) else 1), 200)
     ax4.plot(xs, lamP * np.exp(-lamP * xs), color="k", lw=2, label="Exp(λ̄_P) ref")
     ax4.set_xlabel("Δt"); ax4.set_ylabel("density"); ax4.legend(); ax4.grid(True, alpha=0.3)
@@ -614,13 +753,10 @@ def compare_poisson_vs_hawkes(dt=0.005, steps=200, seed=123,
     plt.tight_layout()
     plt.show()
 
-    # Quick burstiness metric (optional): Fano factor over windowed counts
-    # (Hawkes > 1 typically; Poisson ≈ 1)
-    # return data for further analysis if needed
     return {
         "t": tgrid,
         "arrivals_poisson": aP, "intensity_poisson": lP,
         "arrivals_hawkes": aH, "intensity_hawkes": lH,
         "acf_poisson": acP, "acf_hawkes": acH, "lags": lags,
         "interarrival_poisson": iaP, "interarrival_hawkes": iaH
-    }
+        }
