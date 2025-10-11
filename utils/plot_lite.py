@@ -482,7 +482,7 @@ def generate_results_table_and_hist(env: gym.Env, agent, n_episodes: int = 1):
 
 #################################################
 
-from stochastic_proc.arrivals import PoissonArrivalModel, HawkesArrivalModel
+from stochastic_proc.arrivals import PoissonArrivals, HawkesArrivals
 
 def _acf(x, max_lag=50):
     x = np.asarray(x, float) - np.mean(x)
@@ -549,8 +549,8 @@ def compare_poisson_vs_hawkes(dt=0.005, steps=200, seed=123,
     rng = np.random.default_rng(seed)
 
     # Build models (1 trajectory)
-    P = PoissonArrivalModel(intensity=np.array([lam_buy, lam_sell]), step_size=dt, num_trajectories=1, seed=seed)
-    H = HawkesArrivalModel(baseline_arrival_rate=np.array([[mu, mu]]), step_size=dt,
+    P = PoissonArrivals(intensity=np.array([lam_buy, lam_sell]), step_size=dt, num_trajectories=1, seed=seed)
+    H = HawkesArrivals(baseline_arrival_rate=np.array([[mu, mu]]), step_size=dt,
                            jump_size=jump, mean_reversion_speed=kappa,
                            terminal_time=steps*dt, num_trajectories=1, seed=seed)
 
