@@ -249,7 +249,7 @@ def plot_trajectory(env: gym.Env, agent, seed: int = None, show_reservation: boo
 
     # try to import your infinite helper (adjust path if different)
     try:
-        from agents.Agent import as_infinite_half_spreads as _as_inf_halves
+        from agents.BaseAgent import as_infinite_half_spreads as _as_inf_halves
     except Exception:
         _as_inf_halves = None
 
