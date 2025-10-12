@@ -53,3 +53,6 @@ class SB3TradingVecEnv(VecEnv):
     def env_method(self, method_name: str, *args, indices: VecEnvIndices = None, **kwargs) -> List[Any]: return []
     def env_is_wrapped(self, wrapper_class: Type[gym.Wrapper], indices: VecEnvIndices = None) -> List[bool]:
         return [False] * self.env.N
+    def seed(self, seed: Optional[int] = None) -> List[Union[None, int]]:
+        self.env.reset(seed=seed); return [seed]*self.env.N
+    def get_images(self) -> Sequence[np.ndarray]: return []
