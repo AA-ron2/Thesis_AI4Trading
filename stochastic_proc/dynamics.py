@@ -66,3 +66,59 @@ class LimitAndMarketDynamics(LimitOrderDynamics):
         dq = mo_buy - mo_sell
         dcash = (mo_sell * best_bid) - (mo_buy * best_ask)
         return dq, dcash
+
+class HistoricalLimitOrderDynamics:
+    """
+    Deterministic fills using realized L2 snapshots.
+    action = [bid_half_spread, ask_half_spread] (>=0).
+    Fills when observed trades cross our quote (conservative).
+    """
+    def __init__(self, feed, tick_size: float, quote_size: float = 1.0, max_depth: float = 20.0, num_traj: int = 1):
+        self.feed = feed
+        self.tick = float(tick_size)
+        self.qty  = float(quote_size)
+        self.max_depth = float(max_depth)
+        self.num_traj = int(num_traj)
+        # “mid” comes from the feed each step; keep dt through your env.
+
+    def get_action_space(self) -> gym.spaces.Box:
+        return gym.spaces.Box(low=0.0, high=self.max_depth, shape=(2,), dtype=np.float32)
+
+    @property
+    def midprice(self) -> np.ndarray:
+        # env reads mid from its mid process; for convenience compute here too
+        s = self.feed.snapshot()
+        mid = np.atleast_1d(s["mid"]).astype(float)
+        return mid.reshape(-1, 1)
+
+    def arrivals_and_fills(self, half_spreads: np.ndarray, rng):
+        # no stochastic arrivals; we compute fills directly
+        return None, None
+
+    def cash_inventory_delta(self, half_spreads: np.ndarray, arrivals, fills):
+        s = self.feed.snapshot()
+        mid = np.atleast_1d(s["mid"]).astype(float)              # (N,)
+        bb  = np.atleast_1d(s["best_bid"]).astype(float)
+        ba  = np.atleast_1d(s["best_ask"]).astype(float)
+
+        hb = half_spreads[:, 0]
+        ha = half_spreads[:, 1]
+        # clip quotes inside the spread (don’t cross)
+        bid_px = np.minimum(ba - self.tick, mid - hb)
+        ask_px = np.maximum(bb + self.tick, mid + ha)
+
+        fill_bid = np.zeros(self.num_traj, float)
+        fill_ask = np.zeros(self.num_traj, float)
+
+        if ("trade_px" in s) and (s["trade_px"] is not None):
+            px  = np.atleast_1d(s["trade_px"]).astype(float)
+            sz  = np.atleast_1d(s["trade_sz"]).astype(float)
+            side= np.atleast_1d(s["trade_side"]).astype(float)   # +1 buy MO, -1 sell MO
+            # conservative: fill if MO price crosses our quote
+            fill_bid = np.where((side < 0) & (px <= bid_px), np.minimum(self.qty, sz), 0.0)
+            fill_ask = np.where((side > 0) & (px >= ask_px), np.minimum(self.qty, sz), 0.0)
+        # else: keep zero fills (or add BBO-move heuristic if desired)
+
+        dq    = (fill_bid - fill_ask).astype(int)
+        dcash = (-fill_bid * bid_px + fill_ask * ask_px).astype(float)
+        return dq, dcash

@@ -18,3 +18,25 @@ class BrownianMidprice(ProcessBase):
         self.state[:, 0] += self.sigma * np.sqrt(self.dt) * z
         self.t_idx += 1
         return {"price": self.state[:, 0]}
+    
+class RecordedMidprice(ProcessBase):
+    """
+    Uses L2Feed to supply midprice as a 1-D state per trajectory.
+    For BatchFeed, pass a “feed” whose .step() returns per-trajectory mids.
+    """
+    def __init__(self, feed, num_traj: int, dt: float, T: float):
+        self.feed = feed
+        # initialize from first snapshot
+        s0 = feed.reset(0)
+        # if feed is batched, s0["mid"] should be array-like of length num_traj
+        init = np.atleast_1d(s0["mid"]).astype(float).reshape(1, -1) if np.ndim(s0["mid"]) > 0 else np.array([s0["mid"]])
+        super().__init__(init_state=np.array([np.mean(init)]), num_traj=num_traj, dt=dt, T=T, seed=None)
+
+    def step(self, **kwargs):
+        s = self.feed.step()
+        mid = np.atleast_1d(s["mid"]).astype(float)
+        if mid.shape[0] == 1 and self.num_traj > 1:
+            mid = np.repeat(mid, self.num_traj)
+        self.state[:, 0] = mid
+        self.t_idx += 1
+        return {"price": self.state[:, 0]}

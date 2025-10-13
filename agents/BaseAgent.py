@@ -30,14 +30,14 @@ def as_infinite_half_spreads(s: np.ndarray, q: np.ndarray,
     omega  = float(omega)
 
     # denom must be > 0; clip up to a small epsilon to avoid div-by-zero
-    denom = 2.0 * omega - (gamma**2) * sigma_sq * (q**2)
+    denom = 2.0 * omega - ( (gamma**2) * sigma_sq * (q**2) )
     denom = np.maximum(denom, eps)
 
-    coef = (gamma**2) * sigma_sq / denom
+    # coef = ( (gamma**2) * sigma_sq ) / denom
 
-    z_ask = 1.0 + (1.0 - 2.0 * q) * coef
-    z_bid = 1.0 + (-1.0 - 2.0 * q) * coef
-    # ln requires positive argument; clip to small positive
+    z_ask = 1.0 + ( ( ( 1.0 - 2.0 * q ) * (gamma**2) * sigma_sq) / denom )
+    z_bid = 1.0 + ( ( ( -1.0 - 2.0 * q ) * (gamma**2) * sigma_sq) / denom )
+    
     z_ask = np.maximum(z_ask, eps)
     z_bid = np.maximum(z_bid, eps)
 
@@ -87,7 +87,7 @@ class AvellanedaStoikovAgent:
     """
     def __init__(self, env, gamma=0.1, mode: str = "finite",
                  k_fill: float | None = None,
-                 q_max: int | None = 100,
+                 q_max: int | None = 0,
                  omega: float | None = None):
         self.env = env
         self.gamma = float(gamma)
