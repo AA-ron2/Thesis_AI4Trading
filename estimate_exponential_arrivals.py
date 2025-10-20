@@ -166,24 +166,53 @@ def fit_log_linear(rates: pd.DataFrame, side: str) -> Tuple[float, float, int]:
     return A, float(k), int(len(D))
 
 
-def plot_rates_and_fit(rates: pd.DataFrame, A: float, k: float, side: str, out_path: Path):
+def plot_rates_and_fit(rates: pd.DataFrame, A: float, k: float, side: str, out_path: Path, show=False):
     r = rates[(rates["side"] == side) & np.isfinite(rates["lambda_hat"]) & (rates["lambda_hat"] > 0)]
     plt.figure()
-    plt.scatter(r["delta"], r["lambda_hat"])
-    if math.isfinite(A) and math.isfinite(k) and not r.empty:
-        xs = np.linspace(r["delta"].min(), r["delta"].max(), 100)
-        ys = A * np.exp(-k * xs)
-        plt.plot(xs, ys)
-        title = f"{side.upper()} side: λ̂(δ) with fit (A={A:.4g}, k={k:.4g})"
-    else:
-        title = f"{side.upper()} side: λ̂(δ) (not enough points to fit)"
-    plt.title(title)
-    plt.xlabel("delta (ticks)")
-    plt.ylabel("lambda_hat (1/sec)")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
-    plt.close()
+
+    # --- Figure & axis (MATLAB-ish styling) ---
+    fig = plt.figure(figsize=(4.0, 3.0), dpi=150)
+    ax = plt.gca()
+    for spine in ax.spines.values():
+        spine.set_color("black")
+    ax.tick_params(colors="black")
+    # No grid to match the example
+    # ax.grid(False)
+
+    # --- Empirical λ̂(δ): blue dashed line + open-circle markers ---
+    ax.plot(
+        r["delta"].to_numpy(), r["lambda_hat"].to_numpy(),
+        linestyle="--", linewidth=1.8,
+        marker="o", markersize=5, markerfacecolor="none", markeredgewidth=1.2,
+        color="blue",
+        label="λ"
+    )
+
+    # --- Regression: solid red line ---
+    if math.isfinite(A) and math.isfinite(k):
+        D_line = np.linspace(r["delta"].min(), r["delta"].max(), 400)
+        y_line = A * np.exp(-k * D_line)
+        ax.plot(
+            D_line, y_line,
+            linestyle="-", linewidth=2.0,
+            color="red",
+            label="regression"
+        )
+
+    # --- Title & labels (as in the screenshot) ---
+    ax.set_title("Estimator of λ and its parameterisation at the time of purchase", pad=8)
+    ax.set_xlabel("δ (ticks)")
+    ax.set_ylabel("")  # y-label omitted to match the look
+
+    # --- Legend (boxed, top center) ---
+    leg = ax.legend(loc="upper center", frameon=True, framealpha=1.0)
+    leg.get_frame().set_edgecolor("black")
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig)
 
 
 def auto_horizon_T(ts: pd.Series) -> float:
@@ -233,7 +262,8 @@ def estimate_once(
     tick: Optional[float],
     make_plots: bool,
     outdir: Path,
-    label_suffix: str = "",
+    label_suffix: str = "", 
+    show_plots=False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Run estimation on a core dataframe with columns __ts, best_ask, best_bid."""
     # infer tick if needed
@@ -269,8 +299,8 @@ def estimate_once(
 
     # plots
     if make_plots:
-        plot_rates_and_fit(rates, A_ask, k_ask, "ask", outdir / f"lambda_fit_ask{label_suffix and '_'+label_suffix}.png")
-        plot_rates_and_fit(rates, A_bid, k_bid, "bid", outdir / f"lambda_fit_bid{label_suffix and '_'+label_suffix}.png")
+        plot_rates_and_fit(rates, A_ask, k_ask, "ask", outdir / f"lambda_fit_ask{label_suffix and '_'+label_suffix}.png", show=show_plots)
+        plot_rates_and_fit(rates, A_bid, k_bid, "bid", outdir / f"lambda_fit_bid{label_suffix and '_'+label_suffix}.png", show=show_plots)
 
     return rates, fit
 
