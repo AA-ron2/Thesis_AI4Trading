@@ -40,3 +40,25 @@ class RecordedMidprice(ProcessBase):
         self.state[:, 0] = mid
         self.t_idx += 1
         return {"price": self.state[:, 0]}
+
+class HistoricalMidprice(ProcessBase):
+    def __init__(self, mid_prices: np.ndarray, num_traj: int, dt: float, T: float, sigma: float):
+        # mid_prices: array of historical mid prices
+        self.mid_prices = mid_prices
+        self.current_idx = 0
+        super().__init__(init_state=np.array([mid_prices[0]]), num_traj=num_traj, dt=dt, T=T)
+        
+    def reset(self):
+      super().reset()
+      self.current_idx = 0
+      self.state[:, 0] = self.mid_prices[0]
+
+    def step(self, **kwargs):
+        self.current_idx += 1
+        if self.current_idx < len(self.mid_prices):
+            self.state[:, 0] = self.mid_prices[self.current_idx]
+        else:
+            # repeat the last price if we run out
+            self.state[:, 0] = self.mid_prices[-1]
+        self.t_idx += 1
+        return {"price": self.state[:, 0]}
