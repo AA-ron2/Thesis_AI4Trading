@@ -42,7 +42,7 @@ class RecordedMidprice(ProcessBase):
         return {"price": self.state[:, 0]}
 
 class HistoricalMidprice(ProcessBase):
-    def __init__(self, mid_prices: np.ndarray, num_traj: int, dt: float, T: float, sigma: float):
+    def __init__(self, mid_prices: np.ndarray, num_traj: int, dt: float, T: float):
         # mid_prices: array of historical mid prices
         self.mid_prices = mid_prices
         self.current_idx = 0

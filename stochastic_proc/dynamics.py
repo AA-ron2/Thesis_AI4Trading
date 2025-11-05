@@ -122,3 +122,163 @@ class HistoricalLimitOrderDynamics:
         dq    = (fill_bid - fill_ask).astype(int)
         dcash = (-fill_bid * bid_px + fill_ask * ask_px).astype(float)
         return dq, dcash
+
+# stochastic_proc/dynamics.py (add this class)
+class DOGEUSDTDynamics(LimitOrderDynamics):
+    """
+    Historical data-based dynamics specifically for DOGEUSDT L2 data
+    """
+    def __init__(self, feed, tick_size: float = 0.0001, quote_size: float = 100.0, 
+                 max_depth: float = 0.01, num_traj: int = 1, 
+                 fill_method: str = "cross", min_spread: float = 0.0001):
+        """
+        Args:
+            feed: DOGEUSDTL2Feed or BatchDOGEUSDTFeed instance
+            tick_size: Minimum price increment for DOGEUSDT
+            quote_size: Default quote size
+            max_depth: Maximum half-spread allowed
+            num_traj: Number of parallel trajectories
+            fill_method: How to determine fills - "cross", "improve", or "probabilistic"
+            min_spread: Minimum spread to maintain
+        """
+        self.feed = feed
+        self.tick_size = float(tick_size)
+        self.quote_size = float(quote_size)
+        self.max_depth = float(max_depth)
+        self.num_traj = int(num_traj)
+        self.fill_method = fill_method
+        self.min_spread = min_spread
+        
+        # Use a dummy mid process that gets data from feed
+        self.mid = type('DummyMid', (), {'num_traj': num_traj, 'dt': 1.0})()
+        self.arr = type('DummyArr', (), {'num_traj': num_traj})()
+        
+    def get_action_space(self):
+        return gym.spaces.Box(low=0.0, high=self.max_depth, shape=(2,), dtype=np.float32)
+    
+    @property
+    def midprice(self) -> np.ndarray:
+        snapshot = self.feed.snapshot() if hasattr(self.feed, 'snapshot') else self.feed._get_batch_snapshot()
+        mid = snapshot['mid']
+        if np.isscalar(mid):
+            return np.array([[mid]] * self.num_traj)
+        return mid.reshape(-1, 1)
+    
+    def arrivals_and_fills(self, half_spreads: np.ndarray, rng):
+        """Determine fills based on DOGEUSDT market data"""
+        snapshot = self.feed.snapshot() if hasattr(self.feed, 'snapshot') else self.feed._get_batch_snapshot()
+        
+        if self.fill_method == "cross":
+            return self._cross_fills(snapshot, half_spreads)
+        elif self.fill_method == "improve":
+            return self._improvement_fills(snapshot, half_spreads)
+        else:  # probabilistic
+            return self._probabilistic_fills(snapshot, half_spreads, rng)
+    
+    def _cross_fills(self, snapshot, half_spreads):
+        """Fill if our quote crosses the best bid/ask"""
+        best_bid = snapshot['best_bid']
+        best_ask = snapshot['best_ask']
+        mid = snapshot['mid']
+        
+        if np.isscalar(best_bid):
+            best_bid = np.array([best_bid] * self.num_traj)
+            best_ask = np.array([best_ask] * self.num_traj)
+            mid = np.array([mid] * self.num_traj)
+        
+        # Our quotes
+        our_bid = mid - half_spreads[:, 0]
+        our_ask = mid + half_spreads[:, 1]
+        
+        # Fill if our bid >= best_ask (crosses spread) or our ask <= best_bid
+        bid_fill = our_bid >= best_ask
+        ask_fill = our_ask <= best_bid
+        
+        # Always consider arrivals in historical data
+        arrivals = np.ones((self.num_traj, 2), dtype=bool)
+        fills = np.column_stack([bid_fill, ask_fill])
+        
+        return arrivals, fills
+    
+    def _improvement_fills(self, snapshot, half_spreads):
+        """Fill if our quote improves the best bid/ask"""
+        best_bid = snapshot['best_bid']
+        best_ask = snapshot['best_ask']
+        mid = snapshot['mid']
+        
+        if np.isscalar(best_bid):
+            best_bid = np.array([best_bid] * self.num_traj)
+            best_ask = np.array([best_ask] * self.num_traj)
+            mid = np.array([mid] * self.num_traj)
+        
+        # Our quotes
+        our_bid = mid - half_spreads[:, 0]
+        our_ask = mid + half_spreads[:, 1]
+        
+        # Fill if we improve the best bid/ask
+        bid_fill = our_bid > best_bid
+        ask_fill = our_ask < best_ask
+        
+        arrivals = np.ones((self.num_traj, 2), dtype=bool)
+        fills = np.column_stack([bid_fill, ask_fill])
+        
+        return arrivals, fills
+    
+    def _probabilistic_fills(self, snapshot, half_spreads, rng):
+        """Probabilistic fills based on distance from best quotes"""
+        best_bid = snapshot['best_bid']
+        best_ask = snapshot['best_ask']
+        mid = snapshot['mid']
+        
+        if np.isscalar(best_bid):
+            best_bid = np.array([best_bid] * self.num_traj)
+            best_ask = np.array([best_ask] * self.num_traj)
+            mid = np.array([mid] * self.num_traj)
+        
+        our_bid = mid - half_spreads[:, 0]
+        our_ask = mid + half_spreads[:, 1]
+        
+        # Calculate distance from best quotes in ticks
+        bid_improvement = (our_bid - best_bid) / self.tick_size
+        ask_improvement = (best_ask - our_ask) / self.tick_size
+        
+        # Fill probability increases with improvement
+        bid_fill_prob = 1.0 / (1.0 + np.exp(-2.0 * bid_improvement))
+        ask_fill_prob = 1.0 / (1.0 + np.exp(-2.0 * ask_improvement))
+        
+        # Sample fills
+        bid_fill = rng.random(self.num_traj) < bid_fill_prob
+        ask_fill = rng.random(self.num_traj) < ask_fill_prob
+        
+        arrivals = np.ones((self.num_traj, 2), dtype=bool)
+        fills = np.column_stack([bid_fill, ask_fill])
+        
+        return arrivals, fills
+    
+    def cash_inventory_delta(self, half_spreads: np.ndarray, arrivals: np.ndarray, fills: np.ndarray):
+        """Calculate inventory and cash changes for DOGEUSDT"""
+        snapshot = self.feed.snapshot() if hasattr(self.feed, 'snapshot') else self.feed._get_batch_snapshot()
+        mid = snapshot['mid']
+        
+        if np.isscalar(mid):
+            mid = np.array([mid] * self.num_traj)
+        
+        # Our execution prices
+        bid_px = mid - half_spreads[:, 0]
+        ask_px = mid + half_spreads[:, 1]
+        
+        # Only execute on fills
+        executed_bid = fills[:, 0] & arrivals[:, 0]
+        executed_ask = fills[:, 1] & arrivals[:, 1]
+        
+        dq = np.zeros(self.num_traj, dtype=int)
+        dcash = np.zeros(self.num_traj, dtype=float)
+        
+        # Buy on bid executions, sell on ask executions
+        dq[executed_bid] += 1
+        dq[executed_ask] -= 1
+        
+        dcash[executed_bid] -= bid_px[executed_bid] * self.quote_size
+        dcash[executed_ask] += ask_px[executed_ask] * self.quote_size
+        
+        return dq, dcash
