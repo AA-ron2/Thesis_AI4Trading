@@ -131,16 +131,6 @@ class DOGEUSDTDynamics(LimitOrderDynamics):
     def __init__(self, feed, tick_size: float = 0.0001, quote_size: float = 100.0, 
                  max_depth: float = 0.01, num_traj: int = 1, 
                  fill_method: str = "cross", min_spread: float = 0.0001):
-        """
-        Args:
-            feed: DOGEUSDTL2Feed or BatchDOGEUSDTFeed instance
-            tick_size: Minimum price increment for DOGEUSDT
-            quote_size: Default quote size
-            max_depth: Maximum half-spread allowed
-            num_traj: Number of parallel trajectories
-            fill_method: How to determine fills - "cross", "improve", or "probabilistic"
-            min_spread: Minimum spread to maintain
-        """
         self.feed = feed
         self.tick_size = float(tick_size)
         self.quote_size = float(quote_size)
@@ -149,9 +139,19 @@ class DOGEUSDTDynamics(LimitOrderDynamics):
         self.fill_method = fill_method
         self.min_spread = min_spread
         
-        # Use a dummy mid process that gets data from feed
-        self.mid = type('DummyMid', (), {'num_traj': num_traj, 'dt': 1.0})()
-        self.arr = type('DummyArr', (), {'num_traj': num_traj})()
+        # Create proper objects with state attributes
+        self.mid = type('DummyMid', (), {
+            'num_traj': num_traj, 
+            'dt': 1.0,
+            'state': np.array([[0.0]] * num_traj),  # Add state attribute
+            'step': lambda **kwargs: {"price": self.feed.snapshot()['mid']}
+        })()
+        
+        self.arr = type('DummyArr', (), {
+            'num_traj': num_traj,
+            'state': np.array([[1.0, 1.0]] * num_traj),
+            'step': lambda **kwargs: {"arrivals": np.ones((num_traj, 2), dtype=bool)}
+        })()
         
     def get_action_space(self):
         return gym.spaces.Box(low=0.0, high=self.max_depth, shape=(2,), dtype=np.float32)
