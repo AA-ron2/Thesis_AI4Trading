@@ -2,6 +2,8 @@ from __future__ import annotations
 import numpy as np
 from typing import Optional
 import gymnasium as gym
+from stochastic_proc.midprice import HistoricalMidprice
+from stochastic_proc.arrivals import PoissonArrivals 
 
 FILL_MULT = np.array([[-1.0, +1.0]], dtype=float)  # bid=-1, ask=+1; broadcast to (N,2)
 
@@ -130,7 +132,8 @@ class DOGEUSDTDynamics(LimitOrderDynamics):
     """
     def __init__(self, feed, tick_size: float = 0.0001, quote_size: float = 100.0, 
                  max_depth: float = 0.01, num_traj: int = 1, 
-                 fill_method: str = "cross", min_spread: float = 0.0001):
+                 fill_method: str = "cross", min_spread: float = 0.0001,
+                 arrival_intensity: float = 1.0, sigma: float = 0.02):
         self.feed = feed
         self.tick_size = float(tick_size)
         self.quote_size = float(quote_size)
@@ -139,19 +142,12 @@ class DOGEUSDTDynamics(LimitOrderDynamics):
         self.fill_method = fill_method
         self.min_spread = min_spread
         
-        # Create proper objects with state attributes
-        self.mid = type('DummyMid', (), {
-            'num_traj': num_traj, 
-            'dt': 1.0,
-            'state': np.array([[0.0]] * num_traj),  # Add state attribute
-            'step': lambda **kwargs: {"price": self.feed.snapshot()['mid']}
-        })()
+        # Create proper mid and arrival processes with volatility
+        self.mid = HistoricalMidprice(feed, num_traj=num_traj, dt=1.0, T=10000, sigma=sigma)
+        # self.arr = HistoricalArrivals(feed, arrival_intensity=arrival_intensity, num_traj=num_traj, dt=1.0, T=10000)
         
-        self.arr = type('DummyArr', (), {
-            'num_traj': num_traj,
-            'state': np.array([[1.0, 1.0]] * num_traj),
-            'step': lambda **kwargs: {"arrivals": np.ones((num_traj, 2), dtype=bool)}
-        })()
+                # Initialize parent class
+        super().__init__(self.mid, fill_k=1.0, max_depth=max_depth)
         
     def get_action_space(self):
         return gym.spaces.Box(low=0.0, high=self.max_depth, shape=(2,), dtype=np.float32)
