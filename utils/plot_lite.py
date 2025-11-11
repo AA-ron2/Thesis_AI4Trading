@@ -363,11 +363,11 @@ def plot_trajectory(env: gym.Env, agent, seed: int = None, show_reservation: boo
         # mid
         ax2.plot(timestamps, S[i, :], color="k", lw=1.5, alpha=alpha, label="Mid" if i == 0 else None)
 
-        # quoted bid/ask from actions (always shown)
-        ax2.plot(timestamps[1:], bid_quoted[i, :], color="tab:blue", alpha=alpha,
-                 label="Quoted Bid" if i == 0 else None)
-        ax2.plot(timestamps[1:], ask_quoted[i, :], color="tab:orange", alpha=alpha,
-                 label="Quoted Ask" if i == 0 else None)
+        # # quoted bid/ask from actions (always shown)
+        # ax2.plot(timestamps[1:], bid_quoted[i, :], color="tab:blue", alpha=alpha,
+        #          label="Quoted Bid" if i == 0 else None)
+        # ax2.plot(timestamps[1:], ask_quoted[i, :], color="tab:orange", alpha=alpha,
+        #          label="Quoted Ask" if i == 0 else None)
 
         # reservation overlays (if computed)
         if res_bid is not None:
