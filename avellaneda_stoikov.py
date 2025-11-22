@@ -153,13 +153,13 @@ data['midprice[0]'] = (data["asks[0].price"] + data["bids[0].price"]) / 2
 # Market parameters
 S0 = 0.316005  # Initial stock price
 T = 1.0     # Trading period (1 day)
-sigma = 0.0005 # Volatility
+sigma = 3.5 # Volatility
 M = len(data)     # Number of time steps
 dt = T / M  # Time step size
 Sim = 10 # Number of simulations
 gamma = 0.1 # Risk aversion
-k = 1.5     # Order decay factor
-A = 140  # Market order arrival rate
+k = 0.18     # Order decay factor
+A = 7  # Market order arrival rate
 
 # Initialize variables
 S = np.zeros(M+1)
