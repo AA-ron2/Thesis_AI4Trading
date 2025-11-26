@@ -21,6 +21,8 @@ class LimitOrderDynamics:
         self.dt = self.mid.dt
 
     def get_action_space(self) -> gym.spaces.Box:
+        assert self.max_depth is not None, "For limit orders max_depth cannot be None."
+        # agent chooses spread on bid and ask
         return gym.spaces.Box(low=0.0, high=self.max_depth, shape=(2,), dtype=np.float32)
 
     @property
