@@ -1,4 +1,16 @@
 import numpy as np
+from envs.tradingenv import TradingEnv
+import abc
+import warnings
+from utils.indx import INVENTORY_INDEX, TIME_INDEX, ASSET_PRICE_INDEX, CASH_INDEX, BID_INDEX, ASK_INDEX
+
+class Agent(metaclass=abc.ABCMeta):
+    @abc.abstractmethod
+    def get_action(self, state: np.ndarray) -> np.ndarray:
+        pass
+
+    def get_expected_action(self, state: np.ndarray, n_samples: int = 1000) -> np.ndarray:
+        return np.array([self.get_action(state) for _ in range(n_samples)]).mean(axis=0)
 
 def as_half_spreads(inventory: np.ndarray, t_idx: np.ndarray, T: float, sigma: float, gamma: float, k: float, dt: float):
     # reservation-price skew term
@@ -53,18 +65,18 @@ def as_infinite_half_spreads(s: np.ndarray, q: np.ndarray,
 
     return np.stack([bid_half, ask_half], axis=1)
 
-class AvellanedaStoikovAgent:
+class AvellanedaStoikovAgent(Agent):
     """
     Deterministic AS agent.
     mode='finite'  -> classic finite-horizon with fill parameter k
     mode='infinite'-> infinite-horizon with inventory penalty omega
     """
-    def __init__(self, env, gamma=0.1, mode: str = "finite",
+    def __init__(self, env, gamma: float = 0.1, mode: str = "finite",
                  k_fill: float | None = None,
                  q_max: int | None = 0,
                  omega: float | None = None):
-        self.env = env
-        self.gamma = float(gamma)
+        self.gamma = gamma
+        self.env = env or TradingEnv()
         self.mode = mode.lower()
         self.sigma = env.dyn.mid.sigma
         self.T = env.T
@@ -79,7 +91,15 @@ class AvellanedaStoikovAgent:
             self.omega = 0.5 * (self.gamma**2) * (self.sigma**2) * ((q_max or 100) + 1)**2
         else:
             self.omega = float(omega)
-
+            
+    # def get_action(self, state: np.ndarray):
+    #     inventory = state[:, INVENTORY_INDEX]
+    #     time = state[:, TIME_INDEX]
+    #     action = self._get_action(inventory, time)
+    #     if action.min() < 0:
+    #         warnings.warn("Avellaneda-Stoikov agent is quoting a negative spread")
+    #     return action
+    
     def get_action(self, obs: np.ndarray) -> np.ndarray:
         # obs can be (4,) or (N,4) with [price, inventory, time_idx, cash]
         if obs.ndim == 1:

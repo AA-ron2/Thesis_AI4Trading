@@ -83,7 +83,7 @@ class HistoricalMidprice(ProcessBase):
         self.t_idx += 1
         return {"price": self.state[:, 0]}
     
-class TrueMidprice(ProcessBase):
+class MarketReplay(ProcessBase):
     """
     Single-dimension price process: state[:, 0] = price
     """
