@@ -1,5 +1,6 @@
 import numpy as np
-from envs.tradingenv import TradingEnv
+import math
+# from envs.tradingenv import TradingEnv
 import abc
 import warnings
 from utils.indx import INVENTORY_INDEX, TIME_INDEX, ASSET_PRICE_INDEX, CASH_INDEX, BID_INDEX, ASK_INDEX
@@ -65,6 +66,77 @@ def as_infinite_half_spreads(s: np.ndarray, q: np.ndarray,
 
     return np.stack([bid_half, ask_half], axis=1)
 
+class SimpleOrderBookImbalance:
+    """Simple order book imbalance calculator using volume at top N levels"""
+    
+    def __init__(self, levels=5):
+        """
+        Args:
+            levels: Number of price levels to consider (default: top 5)
+        """
+        self.levels = levels
+    
+    def calculate_imbalance(self, bid_prices, bid_volumes, ask_prices, ask_volumes):
+        """
+        Calculate order book imbalance between -1 and 1.
+        
+        Returns:
+            float: Imbalance value between -1 (heavy sell pressure) and 1 (heavy buy pressure)
+        """
+        if len(bid_volumes) == 0 or len(ask_volumes) == 0:
+            return 0.0
+        
+        # Take top N levels from each side
+        n_bids = min(self.levels, len(bid_volumes))
+        n_asks = min(self.levels, len(ask_volumes))
+        
+        total_bid_volume = np.sum(bid_volumes[:n_bids])
+        total_ask_volume = np.sum(ask_volumes[:n_asks])
+        
+        if total_bid_volume + total_ask_volume == 0:
+            return 0.0
+        
+        # Simple imbalance formula
+        imbalance = (total_bid_volume - total_ask_volume) / (total_bid_volume + total_ask_volume)
+        
+        return imbalance
+    
+    def calculate_weighted_imbalance(self, bid_prices, bid_volumes, ask_prices, ask_volumes):
+        """
+        More sophisticated: weight volumes by distance from mid-price
+        """
+        if len(bid_volumes) == 0 or len(ask_volumes) == 0:
+            return 0.0
+        
+        mid_price = (bid_prices[0] + ask_prices[0]) / 2
+        
+        # Weight bid volumes by how close they are to mid-price
+        bid_weights = []
+        for i, price in enumerate(bid_prices):
+            distance_pct = (mid_price - price) / mid_price
+            weight = np.exp(-10 * distance_pct)  # Exponential decay weight
+            bid_weights.append(weight)
+        
+        # Weight ask volumes by how close they are to mid-price
+        ask_weights = []
+        for i, price in enumerate(ask_prices):
+            distance_pct = (price - mid_price) / mid_price
+            weight = np.exp(-10 * distance_pct)  # Exponential decay weight
+            ask_weights.append(weight)
+        
+        # Take top N levels
+        n_bids = min(self.levels, len(bid_volumes))
+        n_asks = min(self.levels, len(ask_volumes))
+        
+        weighted_bid_volume = np.sum(bid_volumes[:n_bids] * bid_weights[:n_bids])
+        weighted_ask_volume = np.sum(ask_volumes[:n_asks] * ask_weights[:n_asks])
+        
+        if weighted_bid_volume + weighted_ask_volume == 0:
+            return 0.0
+        
+        imbalance = (weighted_bid_volume - weighted_ask_volume) / (weighted_bid_volume + weighted_ask_volume)
+        return imbalance
+
 class AvellanedaStoikovAgent(Agent):
     """
     Deterministic AS agent.
@@ -76,7 +148,7 @@ class AvellanedaStoikovAgent(Agent):
                  q_max: int | None = 0,
                  omega: float | None = None):
         self.gamma = gamma
-        self.env = env or TradingEnv()
+        self.env = env
         self.mode = mode.lower()
         self.sigma = env.dyn.mid.sigma
         self.T = env.T
@@ -92,13 +164,21 @@ class AvellanedaStoikovAgent(Agent):
         else:
             self.omega = float(omega)
             
-    # def get_action(self, state: np.ndarray):
-    #     inventory = state[:, INVENTORY_INDEX]
-    #     time = state[:, TIME_INDEX]
-    #     action = self._get_action(inventory, time)
-    #     if action.min() < 0:
-    #         warnings.warn("Avellaneda-Stoikov agent is quoting a negative spread")
-    #     return action
+    def get_action(self, state: np.ndarray):
+        inventory = state[:, INVENTORY_INDEX]
+        time = state[:, TIME_INDEX]
+        action = self._get_action(inventory, time)
+        if action.min() < 0:
+            warnings.warn("Avellaneda-Stoikov agent is quoting a negative spread")
+        return action
+    
+    def get_action(self, state: np.ndarray):
+        inventory = state[:, INVENTORY_INDEX]
+        time = state[:, TIME_INDEX]
+        action = self._get_action(inventory, time)
+        if action.min() < 0:
+            warnings.warn("Avellaneda-Stoikov agent is quoting a negative spread")
+        return action
     
     def get_action(self, obs: np.ndarray) -> np.ndarray:
         # obs can be (4,) or (N,4) with [price, inventory, time_idx, cash]

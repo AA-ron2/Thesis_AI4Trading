@@ -14,6 +14,22 @@ class PnLReward(RewardFunction):
         old_val = q0 * S0 + c0
         new_val = q1 * S1 + c1
         return (new_val - old_val).astype(np.float32)
+    
+# class PnLReward(RewardFunction):
+#     def calculate(self, current_state, action, next_state, done, info):
+#         # Handle both single trajectory (1D) and batch (2D) states
+#         if current_state.ndim == 1:
+#             # Single trajectory - state is (6,)
+#             S0, q0, _, c0 = current_state[0], current_state[1], current_state[2], current_state[3]
+#             S1, q1, _, c1 = next_state[0], next_state[1], next_state[2], next_state[3]
+#         else:
+#             # Batch trajectories - state is (N, 6)
+#             S0, q0, _, c0 = current_state[:, 0], current_state[:, 1], current_state[:, 2], current_state[:, 3]
+#             S1, q1, _, c1 = next_state[:, 0], next_state[:, 1], next_state[:, 2], next_state[:, 3]
+        
+#         old_val = q0 * S0 + c0
+#         new_val = q1 * S1 + c1
+#         return new_val - old_val
 
 class InventoryQuadraticPenalty(RewardFunction):
     """

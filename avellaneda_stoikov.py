@@ -153,7 +153,7 @@ data['midprice[0]'] = (data["asks[0].price"] + data["bids[0].price"]) / 2
 # Market parameters
 S0 = 0.316005  # Initial stock price
 T = 1.0     # Trading period (1 day)
-sigma = 3.5 # Volatility
+sigma = 2 # Volatility
 M = len(data)     # Number of time steps
 dt = T / M  # Time step size
 Sim = 10 # Number of simulations
@@ -205,8 +205,8 @@ for i in range(1, Sim+1):
         spread[t] = gamma * (sigma**2) * (T - t/M) + (2/gamma) * math.log(1 + (gamma/k))
         
         # Compute bid and ask prices
-        Bid[t] = ReservPrice[t] - spread[t]/2.     
-        Ask[t] = ReservPrice[t] + spread[t]/2.  
+        Bid[t] = max(ReservPrice[t] - spread[t]/2., 0.0001)     
+        Ask[t] = max(ReservPrice[t] + spread[t]/2., 0.0001)  
 
         # Compute order arrival probabilities (Poisson process)
         deltaB[t] = S[t] - Bid[t]     
