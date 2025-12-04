@@ -1,6 +1,6 @@
 from numba import njit
 from hftbacktest import BUY_EVENT
-
+import pandas as pd
 import numpy as np
 
 from hftbacktest import BacktestAsset, ROIVectorMarketDepthBacktest
@@ -92,8 +92,14 @@ asset = (
         .last_trades_capacity(10000)
 )
 
+path = "D:/Documents/CLS/thesis/MM_sandbox/binance_book_snapshot_25_2025-01-01_DOGEUSDT.csv"
+df = pd.read_csv(path)
+# Ensure timestamps are numeric and sorted
+df = df.sort_values("timestamp")
+df["datetime"] = pd.to_datetime(df["timestamp"], unit="us")
+
 hbt = ROIVectorMarketDepthBacktest([asset])
 
-arrival_depth, mid_price_chg = measure_trading_intensity_and_volatility(hbt)
+arrival_depth, mid_price_chg = measure_trading_intensity_and_volatility(df["asks[0].price"])
 
 _ = hbt.close()
