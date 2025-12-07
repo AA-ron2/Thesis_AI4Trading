@@ -98,7 +98,7 @@ df = pd.read_csv(path)
 df = df.sort_values("timestamp")
 df["datetime"] = pd.to_datetime(df["timestamp"], unit="us")
 
-hbt = ROIVectorMarketDepthBacktest([asset])
+hbt = ROIVectorMarketDepthBacktest(df)
 
 arrival_depth, mid_price_chg = measure_trading_intensity_and_volatility(df["asks[0].price"])
 
