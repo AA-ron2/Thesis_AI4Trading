@@ -21,7 +21,7 @@ class ProcessBase:
         max_val: Optional[np.ndarray] = None,
     ):
         init = np.asarray(init_state, float).reshape(1, -1)
-        self.num_traj = int(num_traj)
+        self.num_traj = num_traj
         self.dt = float(dt)
         self.T = float(T)
         self._init = init

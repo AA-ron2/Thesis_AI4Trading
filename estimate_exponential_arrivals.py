@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """
-Estimate exponential arrival parameters A, k from L2 order book data.
+Estimate exponential arrival parameters A, k from L2 order book data,
+and estimate midprice volatility (sigma) from best bid/ask.
 
 Event rule (Option A — best-quote crossover, snapshot-only):
 - ASK side (buy limit at p0 = best_ask + δ*tick): event when best_bid >= p0
 - BID side (sell limit at p0 = best_bid - δ*tick): event when best_ask <= p0
 - Right-censor any pending wait at horizon T.
 
+Volatility (midprice, arithmetic BM estimator):
+  sigma^2_hat = sum((Δm)^2) / sum(Δt)   where m_t = (best_bid + best_ask)/2
+
 Outputs:
-- estimated_rates.csv          (λ̂ by side and δ)
-- estimated_fit_params.csv     (Â, k̂ per side, global and (optional) by windows)
-- lambda_fit_ask.png / ...bid.png (if plotting enabled)
+- estimated_rates.csv
+- estimated_fit_params.csv        (now also includes sigma columns)
+- estimated_rates_by_window.csv   (optional, if --by)
+- estimated_fit_params_by_window.csv (optional, if --by)
+- lambda_fit_ask*.png / lambda_fit_bid*.png (if plotting enabled)
 
 Usage examples:
   python estimate_exponential_arrivals.py --file /path/to/l2.csv
   python estimate_exponential_arrivals.py --file /path/to/l2.csv --deltas 0 1 2 3 4 5 6
   python estimate_exponential_arrivals.py --file /path/to/l2.csv --tick 0.01 --T 10
-  python estimate_exponential_arrivals.py --file /path/to/l2.csv --by H   # per-hour windows
+  python estimate_exponential_arrivals.py --file /path/to/l2.csv --by H
   python estimate_exponential_arrivals.py --file /path/to/l2.csv --no-plots
 
 Notes:
@@ -37,7 +43,7 @@ import matplotlib.pyplot as plt
 
 def find_timestamp_column_name(columns: Iterable[str]) -> Optional[str]:
     for c in columns:
-        if re.search(r"(time|timestamp|ts)", str(c), flags=re.I):
+        if re.search(r"(time|timestamp|ts|datetime)", str(c), flags=re.I):
             return c
     return None
 
@@ -86,6 +92,43 @@ def infer_tick_from_prices(prices: np.ndarray) -> float:
             if cand > 0 and abs(tick - cand) / cand < 0.1:
                 return round(cand, max(0, -k))
     return round(tick, 10)
+
+
+def estimate_midprice_volatility(
+    ts_ns: np.ndarray,
+    best_bid: np.ndarray,
+    best_ask: np.ndarray,
+    tick: float,
+) -> Tuple[float, float, int, float]:
+    """
+    Estimate midprice volatility assuming arithmetic Brownian motion:
+      E[(Δm)^2] = σ^2 Δt  =>  σ^2_hat = sum((Δm)^2)/sum(Δt)
+
+    Returns:
+      sigma_price_per_sqrt_sec, sigma_ticks_per_sqrt_sec, n_increments, total_seconds
+    """
+    mid = 0.5 * (best_bid + best_ask)
+
+    if len(ts_ns) < 2:
+        return float("nan"), float("nan"), 0, 0.0
+
+    dt = (ts_ns[1:] - ts_ns[:-1]) / np.timedelta64(1, "s")
+    dt = dt.astype(float)
+    dm = (mid[1:] - mid[:-1]).astype(float)
+
+    mask = np.isfinite(dt) & (dt > 0) & np.isfinite(dm)
+    dt = dt[mask]
+    dm = dm[mask]
+
+    if dt.size < 1:
+        return float("nan"), float("nan"), 0, 0.0
+
+    total_time = float(np.sum(dt))
+    var_rate = float(np.sum(dm * dm) / total_time) if total_time > 0 else float("nan")
+    sigma_price = float(np.sqrt(var_rate)) if np.isfinite(var_rate) else float("nan")
+    sigma_ticks = float(sigma_price / tick) if (np.isfinite(sigma_price) and np.isfinite(tick) and tick > 0) else float("nan")
+
+    return sigma_price, sigma_ticks, int(dt.size), total_time
 
 
 def waiting_times_crossover(
@@ -168,7 +211,8 @@ def fit_log_linear(rates: pd.DataFrame, side: str) -> Tuple[float, float, int]:
 
 def plot_rates_and_fit(rates: pd.DataFrame, A: float, k: float, side: str, out_path: Path, show=False):
     r = rates[(rates["side"] == side) & np.isfinite(rates["lambda_hat"]) & (rates["lambda_hat"] > 0)]
-    plt.figure()
+    if r.empty:
+        return
 
     # --- Figure & axis (MATLAB-ish styling) ---
     fig = plt.figure(figsize=(4.0, 3.0), dpi=150)
@@ -176,8 +220,6 @@ def plot_rates_and_fit(rates: pd.DataFrame, A: float, k: float, side: str, out_p
     for spine in ax.spines.values():
         spine.set_color("black")
     ax.tick_params(colors="black")
-    # No grid to match the example
-    # ax.grid(False)
 
     # --- Empirical λ̂(δ): blue dashed line + open-circle markers ---
     ax.plot(
@@ -199,7 +241,7 @@ def plot_rates_and_fit(rates: pd.DataFrame, A: float, k: float, side: str, out_p
             label="regression"
         )
 
-    # --- Title & labels (as in the screenshot) ---
+    # --- Title & labels ---
     ax.set_title("Estimator of λ and its parameterisation at the time of purchase", pad=8)
     ax.set_xlabel("δ (ticks)")
     ax.set_ylabel("")  # y-label omitted to match the look
@@ -224,7 +266,6 @@ def auto_horizon_T(ts: pd.Series) -> float:
 
 def load_minimal_df(path: Path) -> pd.DataFrame:
     """Read only timestamp + ask/bid price columns to save memory."""
-    # peek header
     header = pd.read_csv(path, nrows=0)
     cols = list(header.columns)
     ts_col = find_timestamp_column_name(cols)
@@ -234,7 +275,6 @@ def load_minimal_df(path: Path) -> pd.DataFrame:
     ask_cols = [c for c in cols if re.fullmatch(r"asks\[\d+\]\.price", str(c))]
     bid_cols = [c for c in cols if re.fullmatch(r"bids\[\d+\]\.price", str(c))]
     if not ask_cols or not bid_cols:
-        # loose match as fallback
         ask_cols = [c for c in cols if re.search(r"asks?\[\d+\]\.price", str(c))]
         bid_cols = [c for c in cols if re.search(r"bids?\[\d+\]\.price", str(c))]
     if not ask_cols or not bid_cols:
@@ -248,7 +288,6 @@ def load_minimal_df(path: Path) -> pd.DataFrame:
     ask_cols = sort_by_level(ask_cols)
     bid_cols = sort_by_level(bid_cols)
 
-    # best quotes
     best_ask = df[ask_cols].min(axis=1).astype(float).to_numpy()
     best_bid = df[bid_cols].max(axis=1).astype(float).to_numpy()
 
@@ -262,8 +301,8 @@ def estimate_once(
     tick: Optional[float],
     make_plots: bool,
     outdir: Path,
-    label_suffix: str = "", 
-    show_plots=False,
+    label_suffix: str = "",
+    show_plots: bool = False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Run estimation on a core dataframe with columns __ts, best_ask, best_bid."""
     # infer tick if needed
@@ -275,6 +314,11 @@ def estimate_once(
     best_ask = core["best_ask"].to_numpy(dtype=float)
     best_bid = core["best_bid"].to_numpy(dtype=float)
 
+    # --- volatility (midprice) ---
+    sigma_price, sigma_ticks, n_inc, total_secs = estimate_midprice_volatility(
+        ts_ns=ts_ns, best_bid=best_bid, best_ask=best_ask, tick=tick
+    )
+
     # waiting times per side
     wt_ask = waiting_times_crossover(ts_ns, best_bid, best_ask, deltas, tick, T, side="ask")
     wt_bid = waiting_times_crossover(ts_ns, best_bid, best_ask, deltas, tick, T, side="bid")
@@ -283,24 +327,59 @@ def estimate_once(
     rates_ask = rates_for_side(wt_ask, "ask", T)
     rates_bid = rates_for_side(wt_bid, "bid", T)
     rates = pd.concat([rates_ask, rates_bid], ignore_index=True)
+
     rates["tick"] = tick
+    rates["sigma_price_per_sqrt_sec"] = sigma_price
+    rates["sigma_ticks_per_sqrt_sec"] = sigma_ticks
+
     if label_suffix:
         rates["window"] = label_suffix
 
     # fits
     A_ask, k_ask, n_ask = fit_log_linear(rates, "ask")
     A_bid, k_bid, n_bid = fit_log_linear(rates, "bid")
+
     fit = pd.DataFrame(
         [
-            dict(side="ask", A_hat=A_ask, k_hat=k_ask, used_points=n_ask, tick=tick, window=label_suffix),
-            dict(side="bid", A_hat=A_bid, k_hat=k_bid, used_points=n_bid, tick=tick, window=label_suffix),
+            dict(
+                side="ask",
+                A_hat=A_ask,
+                k_hat=k_ask,
+                used_points=n_ask,
+                tick=tick,
+                window=label_suffix,
+                sigma_price_per_sqrt_sec=sigma_price,
+                sigma_ticks_per_sqrt_sec=sigma_ticks,
+                sigma_n_increments=n_inc,
+                sigma_total_seconds=total_secs,
+            ),
+            dict(
+                side="bid",
+                A_hat=A_bid,
+                k_hat=k_bid,
+                used_points=n_bid,
+                tick=tick,
+                window=label_suffix,
+                sigma_price_per_sqrt_sec=sigma_price,
+                sigma_ticks_per_sqrt_sec=sigma_ticks,
+                sigma_n_increments=n_inc,
+                sigma_total_seconds=total_secs,
+            ),
         ]
     )
 
     # plots
     if make_plots:
-        plot_rates_and_fit(rates, A_ask, k_ask, "ask", outdir / f"lambda_fit_ask{label_suffix and '_'+label_suffix}.png", show=show_plots)
-        plot_rates_and_fit(rates, A_bid, k_bid, "bid", outdir / f"lambda_fit_bid{label_suffix and '_'+label_suffix}.png", show=show_plots)
+        plot_rates_and_fit(
+            rates, A_ask, k_ask, "ask",
+            outdir / f"lambda_fit_ask{label_suffix and '_'+label_suffix}.png",
+            show=show_plots
+        )
+        plot_rates_and_fit(
+            rates, A_bid, k_bid, "bid",
+            outdir / f"lambda_fit_bid{label_suffix and '_'+label_suffix}.png",
+            show=show_plots
+        )
 
     return rates, fit
 
@@ -347,9 +426,9 @@ def main():
             r_w, f_w = estimate_once(
                 core=grp.reset_index(),
                 deltas=args.deltas,
-                T=T,           # keep same T for comparability; or recompute auto_horizon_T(grp["__ts"])
+                T=T,                 # keep same T for comparability
                 tick=args.tick,
-                make_plots=False,   # avoid making tons of PNGs
+                make_plots=False,     # avoid generating tons of PNGs
                 outdir=args.outdir,
                 label_suffix=label,
             )
@@ -371,6 +450,15 @@ def main():
     # console summary
     print(f"Saved: {rates_out}")
     print(f"Saved: {fit_out}")
+
+    # Print sigma from the global fit (same for ask/bid rows)
+    try:
+        sigma_price = float(fit_all.loc[fit_all["side"] == "ask", "sigma_price_per_sqrt_sec"].iloc[0])
+        sigma_ticks = float(fit_all.loc[fit_all["side"] == "ask", "sigma_ticks_per_sqrt_sec"].iloc[0])
+        print(f"Estimated sigma: {sigma_price:.10g} (price / sqrt(sec)), {sigma_ticks:.10g} (ticks / sqrt(sec))")
+    except Exception:
+        pass
+
     if not args.no_plots:
         print(f"Saved plots to: {args.outdir}")
 

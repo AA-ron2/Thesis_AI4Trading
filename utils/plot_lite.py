@@ -287,7 +287,18 @@ def plot_trajectory(env: gym.Env, agent, seed: int = None, show_reservation: boo
         sigma = getattr(env.dyn.mid, "sigma", None)
 
         if mode == "finite" and (gamma is not None) and (sigma is not None):
-            k = float(getattr(agent, "k", getattr(env.dyn, "fill_k", None)))
+            # k = float(getattr(agent, "k", getattr(env.dyn, "fill_k", None)))
+            k_raw = getattr(agent, "k", None)
+            if k_raw is None:
+                k_raw = getattr(env.dyn, "fill_k", None)
+            if k_raw is None:
+                fm = getattr(env.dyn, "fill_model", None)
+                k_raw = getattr(fm, "fill_exponent", None) if fm is not None else None
+
+            if k_raw is not None:
+                k = float(k_raw)
+                # ... proceed computing reservation lines
+
             if k is not None:
                 sigma2 = float(sigma) ** 2
                 Ttot = float(env.T)

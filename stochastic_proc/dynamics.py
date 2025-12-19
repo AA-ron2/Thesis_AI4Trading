@@ -1,9 +1,10 @@
 from __future__ import annotations
 import numpy as np
-from typing import Optional
+from typing import Optional, Union
 import gymnasium as gym
 from stochastic_proc.midprice import HistoricalMidprice
 from stochastic_proc.arrivals import PoissonArrivals 
+from .fills import FillProbabilityModel
 
 FILL_MULT = np.array([[-1.0, +1.0]], dtype=float)  # bid=-1, ask=+1; broadcast to (N,2)
 
@@ -12,10 +13,11 @@ class LimitOrderDynamics:
     Binds processes + defines action semantics for LIMIT orders:
     action = [bid_half_spread, ask_half_spread], both >= 0
     """
-    def __init__(self, mid_model, arr_model, fill_k: float, max_depth: Optional[float] = None):
+    def __init__(self, mid_model, arr_model, fill: Union[float, FillProbabilityModel], max_depth: Optional[float] = None):
         self.mid = mid_model
         self.arr = arr_model
-        self.fill_k = float(fill_k)
+        self.fill_model = fill if isinstance(fill, FillProbabilityModel) else None
+        self.fill_k = None if self.fill_model is not None else float(fill)
         self.max_depth = float(max_depth) if max_depth is not None else np.inf
         self.num_traj = self.mid.num_traj
         self.dt = self.mid.dt
