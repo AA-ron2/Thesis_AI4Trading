@@ -8,6 +8,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import random
 
+rng = np.random.default_rng(123)
+
 data = pd.read_csv("D:/Documents/CLS/thesis/MM_sandbox/binance_book_snapshot_25_2025-01-01_DOGEUSDT.csv", index_col = 'timestamp')
 data.index = pd.to_datetime(data.index, unit='us')
 data['midprice[0]'] = (data["asks[0].price"] + data["bids[0].price"]) / 2 
@@ -20,9 +22,9 @@ sigma = 2 # Volatility
 M = len(data)     # Number of time steps
 dt = T / M  # Time step size
 Sim = 10 # Number of simulations
-gamma = 0.1 # Risk aversion
-k = 0.18     # Order decay factor
-A = 7  # Market order arrival rate
+gamma = 0.001 # Risk aversion
+k = 4     # Order decay factor
+A = 140  # Market order arrival rate
 
 # Initialize variables
 S = np.zeros(M+1)
@@ -53,6 +55,8 @@ AverageSpread = []
 Profit = []
 Std = []
 
+tick_size = 0.0001
+
 for i in range(1, Sim+1):
 
     # Simulation loop
@@ -75,16 +79,16 @@ for i in range(1, Sim+1):
         Ask[t] = ReservPrice[t] + spread[t]/2.  
 
         # Compute order arrival probabilities (Poisson process)
-        deltaB[t] = S[t] - Bid[t]     
-        deltaA[t] = Ask[t] - S[t]
+        deltaB[t] = (S[t] - Bid[t]) / tick_size     
+        deltaA[t] = (Ask[t] - S[t]) / tick_size
 
         lambdaA = A * math.exp(-k * deltaA[t])  # Arrival rate for ask orders # Estimate kappa (different for different stocks)
         ProbA = lambdaA * dt  # Probability of ask order execution
-        fa = random.random()  # Random uniform sample for ask side
+        fa = random.random() < ProbA # Random uniform sample for ask side
         
         lambdaB = A * math.exp(-k * deltaB[t])  # Arrival rate for bid orders
         ProbB = lambdaB * dt  # Probability of bid order execution
-        fb = random.random()  # Random uniform sample for bid side
+        fb = random.random() < ProbB # Random uniform sample for bid side
 
         # Execute trades based on probabilities
         if ProbB > fb and ProbA < fa:
@@ -116,7 +120,7 @@ for i in range(1, Sim+1):
 x = data.index
 fig=plt.figure(figsize=(10,8))  
 plt.subplot(2,1,1) # number of rows, number of  columns, number of the subplot 
-plt.plot(x,S[:M], lw = 1., label = 'S')
+plt.plot(x,midprice, lw = 1., label = 'S')
 plt.plot(x,ReservPrice[:M], lw = 1., label = 'r')
 plt.plot(x,Ask[:M], lw = 1., label = 'r^a')
 plt.plot(x,Bid[:M], lw = 1., label = 'r^b')       
